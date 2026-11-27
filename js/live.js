@@ -126,7 +126,8 @@
       if (!t) return;
       t.score = s.score;
       t.rows = s.scoreRows || t.rows;
-      t.verdict = s.scoreVerdict || t.verdict;
+      /* 판정 문구는 계산 경계(90·80·70·50)에서 바로 낸다 — live.json 사본이 낡아도 문구가 갈리지 않게 */
+      t.verdict = (w.GaugeMath && w.GaugeMath.verdictOf) ? w.GaugeMath.verdictOf(s.score) : (s.scoreVerdict || t.verdict);
       t.as_of = s.scoreAsOf || t.as_of;
       t.dd = s.scoreDetail ? s.scoreDetail.dd : t.dd;
       t.close = s.scoreDetail ? s.scoreDetail.close : t.close;
