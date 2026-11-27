@@ -1,7 +1,7 @@
 /* 매수 지표 탭 — 원본 앱 GaugeScreen(밸류게이지) 을 웹으로 옮긴 화면.
  *
  * 원본 구성(위에서 아래로): 대상 칩·가격 → 기준 줄 → 값 직접 입력(접힘) → 밸류게이지 카드 →
- * 문턱 통계 → 육각 레이더 → 최근 한 달 두 차트 → 전체 흐름 → 지표 추적(접힘) → 폭락 비교(접힘).
+ * 지표 추적(접힘) → 문턱 통계 → 육각 레이더 → 최근 한 달 두 차트 → 전체 흐름 → 폭락 비교(접힘).
  *
  * 계산은 원본 core/Singularity.kt 와 같은 식이다(가중치·경계·클램프 그대로). 값이 없는 지표는
  * 빼고 남은 가중치 합으로 나눈다. 과거 통계·일봉·주별 이력은 data/gauge.json 에 미리 계산해 두었다.
@@ -493,6 +493,7 @@
     if (ST.target === undefined) loadState();
     var G = Data.gauge;
     if (!G) { view.innerHTML = '<div class="loading">매수 지표 자료를 불러오는 중…</div>'; return; }
+    if (detailId) { gaugeCaseView(view, detailId); return; }
     if (!G.axes) G.axes = AXES;
 
     var t = ST.target, T = G.targets[t];
@@ -596,11 +597,12 @@
         '<p class="note">점수는 그날까지의 자료만으로 계산했습니다(미래 자료가 섞이지 않게). 2002·2008은 이 사이트의 주별 이력(2011~) 밖이라 그래프가 아니라 위 글줄에만 적었습니다.</p>' +
       '</article>';
 
-    /* 8) 지표 기록·버블·산식 (접힘) — 입력부는 위 topPanel 하나뿐 */
+    /* 8) 지표 기록·버블·산식 (접힘, 밸류게이지 카드 바로 아래) — 입력부는 위 topPanel 하나뿐 */
     var track = trackingHtml(t, values, result, snap);
     /* 9) 폭락 비교 (접힘) */
     var crashHtml = crashSectionHtml(detailId);
 
+    var crashOpen = !!ST.open.crash || isCrashPath();
     view.innerHTML =
       '<section class="hero g-hero"><div class="crumb"><a href="#/">홈</a> / 매수 지표</div>' +
         '<h1>매수 지표</h1>' +
@@ -609,21 +611,85 @@
       topPanel +
       head +
       gaugeCard +
+      section('track', '지표 기록 · 버블 · 산식', '과거 점수 기록, 버블 체크, 무엇이 실시간인가, 매매 기준·산식. 눌러서 폅니다.', track) +
       statBlock +
       radarCard +
       chartsCard +
       flowCard +
-      section('track', '지표 기록 · 버블 · 산식', '과거 점수 기록, 버블 체크, 무엇이 실시간인가, 매매 기준·산식. 눌러서 폅니다.', track) +
-      section('crash', '폭락 비교', '저점 전후 1년 비교 · 여섯 사례. 눌러서 폅니다.', crashHtml, !!detailId);
+      section('crash', '폭락 비교', '저점 전후 1년 비교 · 여섯 사례. 눌러서 폅니다.', crashHtml, crashOpen);
 
     bind(view, t, detailId);
     drawCharts(view, t, monthPts, result.score);
-    if (ST.open.crash || detailId) drawOverlap(view, Data.crashes.cases);
+    if (crashOpen) drawOverlap(view, Data.crashes.cases);
     if (detailId) {
       var c = Data.caseById(detailId);
       if (c) drawCrashChart(view, c);
     }
+    afterRenderScroll(view, null);
   };
+
+  /* ------------------------------------------------------------ 폭락 사례 — 자기 페이지
+   * #/gauge/crash/<id> 는 매수 지표 본문을 그리지 않고 이 화면만 그린다.
+   * 구성: 이동줄·제목·기간·핵심 수치 → 상세 차트 → 닮은 날·비교 표 → 이전/목록/다음.
+   */
+  var CASE_SCROLLED = null;
+
+  function gaugeCaseView(view, id) {
+    var c = Data.caseById(id);
+    CRASH_SCROLLED = false;   /* 사례 페이지에서 목록으로 돌아올 때 폭락 비교 자리로 가도록 */
+    var crumb = '<div class="crumb"><a href="#/">홈</a> / <a href="#/gauge">매수 지표</a> / <a href="#/gauge/crash">폭락 비교</a>' +
+      (c ? ' / ' + esc(c.name) : '') + '</div>';
+    if (!c) {
+      view.innerHTML = '<section class="hero g-hero">' + crumb + '<h1>폭락 사례</h1>' +
+        '<p>없는 사례입니다.</p></section>' +
+        '<article class="panel"><a class="btn ghost sm" href="#/gauge/crash">폭락 비교 목록으로</a></article>';
+      return;
+    }
+    view.innerHTML =
+      '<section class="hero g-hero">' + crumb +
+        '<h1>' + esc(c.name) + '</h1>' +
+        '<p>' + esc(c.tag) + ' · ' + esc(c.index) + ' 기준 · 고점 ' + F.day(c.peak) + ' → 저점 ' + F.day(c.trough) +
+          ' · 최대 낙폭 <b>' + F.pct(c.dd, 1) + '</b> · ' + F.int(c.days_to_trough) + '거래일</p>' +
+      '</section>' +
+      crashDetailHtml(c);
+    bindCase(view, c);
+    drawCrashChart(view, c);
+    if (CASE_SCROLLED !== id) {
+      CASE_SCROLLED = id;
+      try { w.scrollTo({ top: 0, behavior: 'auto' }); } catch (e) { w.scrollTo(0, 0); }
+    }
+  }
+
+  /* 사례 페이지 이벤트 — 고점/저점 기준만 붙인다(다른 화면 이벤트는 붙이지 않는다) */
+  function bindCase(view, c) {
+    els(view, '[data-scale]').forEach(function (b) {
+      b.classList.toggle('on', b.getAttribute('data-scale') === crashScale);
+      b.addEventListener('click', function () {
+        crashScale = b.getAttribute('data-scale');
+        els(view, '[data-scale]').forEach(function (x) { x.classList.toggle('on', x === b); });
+        drawCrashChart(view, c);
+      });
+    });
+  }
+
+  /* 주소가 폭락 비교 목록(#/gauge/crash)인가 — 그 주소로 들어오면 섹션을 펴고 차트도 그린다 */
+  function isCrashPath() { return /^#\/gauge\/crash\/?$/.test(String(location.hash || '')); }
+
+  /* 매수 지표 본문으로 돌아온 화면에서 폭락 비교 자리로 — 주소가 폭락 비교일 때만,
+     한 번만 스크롤한다(다시 그릴 때 또 튀지 않게). */
+  var CRASH_SCROLLED = false;
+  function afterRenderScroll(view, detailId) {
+    if (detailId) return;
+    if (!isCrashPath()) { CRASH_SCROLLED = false; return; }
+    if (CRASH_SCROLLED) return;
+    CRASH_SCROLLED = true;
+    var sec = el('.g-sec[data-sec="crash"]', view);
+    if (!sec) return;
+    w.setTimeout(function () {
+      var top = sec.getBoundingClientRect().top + (w.pageYOffset || 0) - 10;
+      try { w.scrollTo({ top: Math.max(0, top), behavior: 'smooth' }); } catch (e) { w.scrollTo(0, Math.max(0, top)); }
+    }, 40);
+  }
 
   /* ------------------------------------------------------------ 매수 지표 입력(맨 위) */
 
@@ -858,11 +924,32 @@
 
   /* ------------------------------------------------------------ 일곱 시점 겹쳐 보기(원본 CrashChartView)
    *
-   * 세 보기 — 저점=100·로그(기본) / 고점=100·로그 / 낙폭%.
-   * 오늘 선은 live.json → 없으면 확정 종가 → 수동 입력 순으로 정해지고, 기준을 화면에 적는다.
-   */
-  var OV = { scale: 'date', win: 1 };
-  var OV_OFF = [];   /* 칩은 처음엔 전부 켜진다 — 끄기는 이 화면에서만(저장하지 않음) */
+  /* 폭락 비교 — 보기 눈금은 '저점=100 · 로그' · '고점=100 · 로그' · '낙폭 %'(기본) 셋.
+     '날짜' 보기는 껐다(무아 님 2026-11-28). drawDateOverlap·ovDate* 함수는 지우지 않고
+     호출 경로(drawOverlap 의 분기)만 끊어 두었다 — 되살릴 때 그 한 줄만 돌리면 된다. */
+  var OV = { scale: 'pct', win: 1 };
+  var OV_OFF = [];   /* 사례 칩 — 처음엔 전부 켜진다. 끄기는 이 화면에서만(저장하지 않음).
+                        '현재'(id 'today')만 예외로 켜고 끈 상태를 브라우저에 남긴다. */
+
+  /* 저점 기준 보이는 기간 — 6개월 단위 6단계. 거래일은 1년=252 기준(0.5년=126, 1.5년=378). */
+  var OV_WINS = [0.5, 1, 1.5, 2, 2.5, 3];
+  function ovWinText(v) {
+    var m = Math.round(Number(v) * 12);
+    if (!m || isNaN(m)) return '—';
+    var y = Math.floor(m / 12), r = m % 12;
+    return y ? (y + '년' + (r ? ' ' + r + '개월' : '')) : (r + '개월');
+  }
+  function ovTodayOn() { return OV_OFF.indexOf('today') < 0; }
+  function ovSetToday(on) {
+    var i = OV_OFF.indexOf('today');
+    if (on && i >= 0) OV_OFF.splice(i, 1);
+    if (!on && i < 0) OV_OFF.push('today');
+    S.set('crashTodayOff', !on);
+  }
+  function ovAllOn(cases) {
+    if (!ovTodayOn()) return false;
+    return (cases || []).every(function (c) { return OV_OFF.indexOf(c.id) < 0; });
+  }
 
   function ovCasePath(c, scale) {
     var src;
@@ -878,9 +965,25 @@
     }).filter(function (p) { return p[0] >= -lim && p[0] <= lim && (scale === 'pct' || p[1] > 0); });
   }
 
-  /* 오늘 경로 — ^NDX 일봉에서 고점 이후 하루씩. live/수동 값이 있으면 끝점을 그 값에 맞춘다.
-     확정 구간은 scores.index 끝(마지막 확정일)까지, 실시간·수동이면 오늘 점을 하나 더 붙여
-     선이 오늘까지 이어진다. */
+  /* '현재' 값 — 사례 선과 같은 계열(^NDX 지수 낙폭). 대상(TQQQ·SOXL) 낙폭은 쓰지 않는다.
+     live.json 의 ^NDX 시세가 확정 종가와 다르면 그 값(프리마켓·정규장)으로, 같으면 확정 NDX 낙폭으로 둔다.
+     기준(정규장/프리마켓) 설정과 상관없이 늘 최신 값을 본다 — 5분 갱신이 이 값을 따라온다. */
+  function ovNowPoint() {
+    var now = Data.now();
+    var ddNow = now.dd, src = 'close';
+    var label = '확정 종가 · ' + F.day(now.as_of);
+    var q = (w.Basis && Basis.quote) ? (Basis.quote('^NDX') || Basis.quote('NDX')) : null;
+    if (q && q.price !== null && q.price !== undefined && now.peak_close > 0) {
+      var ddLive = (q.price / now.peak_close - 1) * 100;
+      if (Math.abs(ddLive - now.dd) > 0.005) {
+        ddNow = ddLive; src = 'live';
+        label = '실시간 추정 · ' + (q.at ? F.day(String(q.at).slice(0, 10)) + ' ' : '') + (q.hhmm || '시각 없음') + (q.session ? ' (' + q.session + ')' : '') + ' · ^NDX ' + F.fixed(q.price, 2);
+      }
+    }
+    return { dd: ddNow, src: src, label: label };
+  }
+
+  /* 현재 경로 — ^NDX 일봉에서 고점 이후 하루씩. 값이 실제로 움직였을 때만 한 점을 더 붙인다. */
   function ovToday() {
     var now = Data.now();
     var idx = Data.scores.index || [];
@@ -893,43 +996,20 @@
     if (!rows.length) return null;
     var lastConfirmed = dates[dates.length - 1];
 
-    var ddNow = now.dd, src = 'close';
-    var label = '확정 종가 · ' + F.day(now.as_of);
-    /* 지표 추적에서 손댄 값이 있으면 그 여섯 값이 기준 — 오늘 선도 같은 낙폭에서 끝난다 */
-    if (typeof ST !== 'undefined' && (ST.mode === 'manual' || ST.edited)) {
-      var v = valuesRef(ST.target);
-      if (v && v.dd !== null && v.dd !== undefined) { ddNow = -Math.abs(v.dd); src = ST.mode === 'manual' ? 'manual' : 'edited'; label = (ST.mode === 'manual' ? '직접 입력한 값' : '지표에서 역산한 값'); }
-    } else if (w.Basis && Basis.get() === 'live') {
-      var lv = Basis.liveFor ? Basis.liveFor(ST.target) : null;
-      if (lv && lv.values && lv.values.dd !== null && lv.values.dd !== undefined) {
-        ddNow = -Math.abs(lv.values.dd);
-        src = 'live';
-        label = '실시간(추정) · ' + (etPart(liveInfo(ST.target)) || '시각 없음');
-      } else {
-      var q = Basis.quote('^NDX') || Basis.quote('NDX');
-      if (q && now.peak_close > 0) {
-        ddNow = (q.price / now.peak_close - 1) * 100;
-        src = 'live';
-        label = '실시간(추정) · ' + (q.session ? q.session + ' ' : '') + (q.hhmm || '');
-      }
-      }
-    }
+    var np = ovNowPoint();
+    var ddNow = np.dd, src = np.src, label = np.label;
     var lastDd = rows[rows.length - 1].dd;
+    var confOffset = rows[rows.length - 1].x;
     var ratio = (lastDd > -100) ? (1 + ddNow / 100) / (1 + lastDd / 100) : 1;
 
-    /* 실시간·수동·손댐이면 오늘 점을 하나 더 붙여 선을 오늘까지 이어 준다(확정 모드는 확정 종가까지) */
-    var extended = (src !== 'close');
-    var todayIso = null;
-    if (extended) {
-      var meta = liveInfo(ST.target);
-      todayIso = (meta && meta.barLive) || F.today();
-      if (todayIso !== lastConfirmed) {
-        rows.push({ x: rows.length, dd: ddNow, live: true });
-        dates.push(todayIso);
-      } else {
-        todayIso = lastConfirmed;
-        rows[rows.length - 1].dd = ddNow;   /* 같은 날이면 그 날 값을 지금 값으로 */
-      }
+    /* 선을 지금까지 잇는다 — 값이 실제로 움직였을 때만 한 점을 더 붙인다.
+       확정 종가와 사실상 같은 값이면 점을 붙이지 않아 선이 마지막 확정 점에서 평평하게 끝난다
+       (수직 낙하·없는 거래일 만들지 않기). */
+    var extended = false;
+    if (src !== 'close' && Math.abs(ddNow - lastDd) >= 0.005) {
+      rows.push({ x: rows.length, dd: ddNow, live: true });
+      dates.push(F.today());
+      extended = true;
     }
 
     var t = 0, best = 1e9;
@@ -943,9 +1023,11 @@
         return [r.x - t, ((1 + r.dd / 100) * ratio / troughBase - 1) * 100];
       }),
       offset: rows[rows.length - 1].x,
+      confOffset: confOffset,
       troughOffset: rows[rows.length - 1].x - t,
+      troughConf: confOffset - t,
       firstDate: dates[0], lastDate: dates[dates.length - 1], lastConfirmed: lastConfirmed,
-      liveDate: extended ? todayIso : null, n: rows.length
+      liveDate: extended ? dates[dates.length - 1] : null, n: rows.length
     };
   }
 
@@ -954,18 +1036,46 @@
       : (s === 'peak' ? '고점=100 · 로그' : (s === 'date' ? '날짜' : '낙폭 %'));
   }
 
-  var OV_SCALES = ['trough', 'peak', 'pct', 'date'];
+  var OV_SCALES = ['trough', 'peak', 'pct'];   /* '날짜' 보기는 뺐다(함수는 남기고 이 목록에서만 제외) */
+
+  /* 겹쳐 보기 칩줄 — [전체] 1929 → 2025 [현재]. 사례는 고점 연도 시간 순. */
+  function ovChipCases(cases) {
+    return (cases || []).slice().sort(function (a, b) {
+      return Number(String(a.peak).slice(0, 4)) - Number(String(b.peak).slice(0, 4));
+    });
+  }
+
+  function ovChipsSync(view, cases) {
+    els(view, '[data-ovcase]').forEach(function (b) {
+      b.classList.toggle('on', OV_OFF.indexOf(b.getAttribute('data-ovcase')) < 0);
+    });
+    els(view, '[data-ovtoday]').forEach(function (b) { b.classList.toggle('on', ovTodayOn()); });
+    els(view, '[data-ovall]').forEach(function (b) { b.classList.toggle('on', ovAllOn(cases)); });
+  }
 
   function overlapCard(cases) {
     var saved = S.get('crashOv', null);
-    if (OV_SCALES.indexOf(saved) >= 0) OV.scale = saved;
+    if (saved === 'date') { OV.scale = 'pct'; S.set('crashOv', 'pct'); }   /* 옛 '날짜' 보기 → 낙폭 % */
+    else if (OV_SCALES.indexOf(saved) >= 0) OV.scale = saved;
+    if (OV_SCALES.indexOf(OV.scale) < 0) OV.scale = 'pct';
     var savedWin = Number(S.get('crashWin', 1));
-    OV.win = (savedWin === 2 || savedWin === 3) ? savedWin : 1;
-    var chips = cases.map(function (c) {
+    OV.win = OV_WINS.indexOf(savedWin) >= 0 ? savedWin : 1;
+    /* '현재' 켜고 끈 상태는 저장값을 따른다(사례 칩은 이 화면에서만 유지) */
+    if (S.get('crashTodayOff', false) && ovTodayOn()) OV_OFF.push('today');
+
+    var chips = ovChipCases(cases).map(function (c) {
       var on = OV_OFF.indexOf(c.id) < 0;
       return '<button class="chip ' + (on ? 'on' : '') + '" type="button" data-ovcase="' + c.id + '">' +
         '<span class="dot" style="background:' + c.color + '"></span>' + esc(c.short) + '</button>';
     }).join('');
+    var nC = (cases || []).length || 1;
+    var allColors = (cases || []).map(function (c, i) {
+      return c.color + ' ' + (i * 100 / nC).toFixed(1) + '% ' + ((i + 1) * 100 / nC).toFixed(1) + '%';
+    }).join(',');
+    var allChip = '<button class="chip ' + (ovAllOn(cases) ? 'on' : '') + '" type="button" data-ovall="1">' +
+      '<span class="dot" style="background:conic-gradient(' + allColors + ')"></span>전체</button>';
+    var todayChip = '<button class="chip ' + (ovTodayOn() ? 'on' : '') + '" type="button" data-ovtoday="today">' +
+      '<span class="dot" style="background:var(--blue)"></span>현재</button>';
     return '<article class="panel">' +
       '<div class="row" style="justify-content:space-between;align-items:center">' +
         '<div class="g-sub" style="margin:0">' + cases.length + '개 시점 겹쳐 보기</div>' +
@@ -975,11 +1085,15 @@
           }).join('') +
         '</span>' +
       '</div>' +
-      '<div class="pill-row" id="ovChips" style="margin:8px 0 2px">' + chips + '</div>' +
-      '<div class="g-win"><div class="row" style="justify-content:space-between"><span class="g-cap" style="margin:0">저점 기준 보이는 기간 <b id="ovWinLab">' + OV.win + '년</b></span>' +
-        '<span class="g-cap" style="margin:0">1년 · 2년 · 3년</span></div>' +
-        '<input type="range" id="ovWin" min="1" max="3" step="1" value="' + OV.win + '" aria-label="저점 기준 보이는 기간(년)"></div>' +
-      '<p class="note" style="margin:0 0 4px">여섯 사례는 처음에 모두 켜져 있습니다. 끄기는 이 화면에서만 유지되고 저장되지는 않습니다.</p>' +
+      '<div class="pill-row" id="ovChips" style="margin:8px 0 2px">' + allChip + chips + todayChip + '</div>' +
+      '<div class="g-win"><div class="row" style="justify-content:space-between"><span class="g-cap" style="margin:0">저점 기준 보이는 기간 <b id="ovWinLab">' + ovWinText(OV.win) + '</b></span>' +
+        '<span class="g-cap" style="margin:0">6개월 · 1년 · 1년 6개월 · 2년 · 2년 6개월 · 3년</span></div>' +
+        '<input type="range" id="ovWin" min="0.5" max="3" step="0.5" value="' + OV.win + '" aria-label="저점 기준 보이는 기간(6개월 단위)"></div>' +
+      '<p class="note" style="margin:0 0 4px">처음에는 전부 켜져 있습니다. 사례 칩의 끄기는 이 화면에서만 유지되고, 현재 칩의 상태는 저장됩니다.</p>' +
+      '<div class="row" id="ovNowBig" style="justify-content:space-between;align-items:baseline;margin:2px 0 2px">' +
+        '<div class="g-stat" style="margin:0">현재 낙폭 <b class="num neg" id="ovNowDd" style="font-size:21px">—</b></div>' +
+        '<span class="g-cap" style="margin:0;font-size:11.5px" id="ovNowSrc">—</span>' +
+      '</div>' +
       '<div class="chart-box" id="ovChart" style="touch-action:pan-y"></div>' +
       '<p class="note" id="ovReadout"></p>' +
       '<p class="note" id="ovCaption"></p>' +
@@ -988,18 +1102,21 @@
   }
 
   function ovCaptionText(scale) {
+    var nd = Math.round(252 * (OV.win || 1));
+    var span = '−' + ovWinText(OV.win) + '~+' + ovWinText(OV.win);
+    var shortEnd = OV.win > 1 ? ' 넓힌 구간의 끝은 사례 자료가 고점 ±1년까지만 있어 선이 짧게 끝납니다.' : '';
     if (scale === 'trough') {
-      return '각 사례의 **저점 = 100**, 세로는 로그 눈금. 저점 0일 기준 −1~±3년(슬라이더) 구간이라 선이 저점에서 만납니다. ' +
-        '오늘 선은 지금까지의 잠정 저점을 100으로 두고 같은 방식으로 옮겼습니다(최종 저점이 아니라 잠정값).';
+      return '각 사례의 **저점 = 100**, 세로는 로그 눈금. 저점 0일 기준 ' + span + '(' + nd + '거래일, 슬라이더) 구간이라 선이 저점에서 만납니다. ' +
+        '현재 선은 지금까지의 잠정 저점을 100으로 두고 같은 방식으로 옮겼습니다(최종 저점이 아니라 잠정값).' + shortEnd;
     }
     if (scale === 'peak') {
-      return '각 사례의 **고점 = 100**, 세로는 로그 눈금. 고점 0일 기준 −252~+252거래일.';
+      return '각 사례의 **고점 = 100**, 세로는 로그 눈금. 고점 0일 기준 ' + span + '.' + shortEnd;
     }
     if (scale === 'date') {
       return '각 사례를 **실제 날짜** 위치에 놓고 세로는 낙폭 %로. 1929·1987·2000·2008·2020·2025가 시간 순서로 어디에 앉는지 보입니다. ' +
         '가로 위치는 고점 날짜에 거래일(주말 제외)을 더해 잡은 근사값입니다 — 고점·저점 날짜는 자료 그대로입니다.';
     }
-    return '같은 구간을 **낙폭 %** 선형 눈금으로. 로그 보기와 달라 깊은 낙폭이 더 크게 보입니다.';
+    return '같은 구간을 **낙폭 %** 선형 눈금으로. 사례·현재 모두 ^NDX 지수 낙폭이라 같은 눈금에서 겹쳐집니다. 로그 보기와 달리 깊은 낙폭이 더 크게 보입니다.' + shortEnd;
   }
 
   /* ------------------------------------------------------------ 날짜 축 보기
@@ -1172,22 +1289,31 @@
     var host = el('#ovChart', view);
     if (!host) return;
     var scale = OV.scale;
-    if (scale === 'date') { drawDateOverlap(view, cases); return; }
+    /* '날짜' 보기는 껐다 — 되살리려면 아래 한 줄을 살리고 OV_SCALES 에 'date' 를 넣는다. */
+    /* if (scale === 'date') { drawDateOverlap(view, cases); return; } */
     var today = ovToday();
+    var showToday = ovTodayOn();
+    ovNowBadge(view, showToday, today);   /* 차트를 못 그려도 숫자는 맞춰 둔다 */
     var on = cases.filter(function (c) { return OV_OFF.indexOf(c.id) < 0; });
     var series = on.map(function (c) { return { id: c.id, short: c.short, color: c.color, pts: ovCasePath(c, scale) }; });
-    var todayPts = today ? (scale === 'trough' ? today.trough : today.peak) : [];
+    var todayPts = (today && showToday) ? (scale === 'trough' ? today.trough : today.peak) : [];
     var lim2 = 252 * (OV.win || 1);
     todayPts = todayPts.filter(function (p) { return p[0] >= -lim2 && p[0] <= lim2; });
-    if (scale === 'trough' && today) {
+    if (scale === 'trough' && today && showToday) {
       todayPts = today.trough.map(function (p) { return [p[0], 100 * (1 + p[1] / 100)]; });
-    } else if (today) {
+    } else if (today && showToday) {
       todayPts = today.peak.map(function (p) { return [p[0], scale === 'pct' ? p[1] : 100 * (1 + p[1] / 100)]; });
     }
 
     var W = 760, H = 320, pad = { l: 48, r: 66, t: 16, b: 28 };
     var all = series.reduce(function (a, s) { return a.concat(s.pts); }, []).concat(todayPts);
-    if (!all.length) { host.innerHTML = '<div class="empty">그릴 값이 없습니다.</div>'; return; }
+    if (!all.length) {
+      host.innerHTML = '<div class="empty">그릴 값이 없습니다.</div>';
+      host.__ov = { series: series, today: today, todayOn: showToday, todayPts: [], scale: scale };
+      var ro0 = el('#ovReadout', view);
+      if (ro0) ro0.textContent = '켜 둔 사례가 없습니다 — 위 칩에서 사례나 현재를 눌러 켜세요.';
+      return;
+    }
     var ys = all.map(function (p) { return p[1]; });
     var lo = Math.min.apply(null, ys), hi = Math.max.apply(null, ys);
     if (scale !== 'pct') {
@@ -1206,8 +1332,8 @@
     var sy = function (v) { return pad.t + ih - (yOf(v) - loL) / (hiL - loL) * ih; };
 
     var s = ['<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="폭락 사례 겹쳐 보기 — ' + ovScaleLabel(scale) + '">'];
-    /* 가로 눈금 — 저점/고점 기준일과 ±1년 */
-    [[-lim, '−' + OV.win + '년'], [-Math.round(lim / 2), '−' + (OV.win / 2) + '년'], [0, '0'], [Math.round(lim / 2), '+' + (OV.win / 2) + '년'], [lim, '+' + OV.win + '년']].forEach(function (t) {
+    /* 가로 눈금 — 저점/고점 기준일과 고른 기간(6개월 단위) */
+    [[-lim, '−' + ovWinText(OV.win)], [-Math.round(lim / 2), '−' + ovWinText(OV.win / 2)], [0, '0'], [Math.round(lim / 2), '+' + ovWinText(OV.win / 2)], [lim, '+' + ovWinText(OV.win)]].forEach(function (t) {
       var x = sx(t[0]);
       s.push('<line x1="' + x.toFixed(1) + '" y1="' + pad.t + '" x2="' + x.toFixed(1) + '" y2="' + (pad.t + ih) + '" stroke="var(--line)" stroke-width="1" stroke-dasharray="2 4"/>');
       s.push('<text x="' + x.toFixed(1) + '" y="' + (H - 9) + '" text-anchor="middle" font-size="10.5" fill="var(--dim)">' + t[1] + '</text>');
@@ -1232,13 +1358,13 @@
       s.push('<path d="' + d + '" fill="none" stroke="' + se.color + '" stroke-width="1.4" stroke-opacity="0.85" stroke-linejoin="round"/>');
     });
 
-    /* 오늘 — 강조색으로 굵게 */
+    /* 현재 — 강조색으로 굵게 */
     if (todayPts.length) {
       var dt = todayPts.map(function (p, i) { return (i ? 'L' : 'M') + sx(p[0]).toFixed(1) + ' ' + sy(p[1]).toFixed(1); }).join('');
       s.push('<path d="' + dt + '" fill="none" stroke="var(--blue)" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round"/>');
       var last = todayPts[todayPts.length - 1];
       s.push('<circle cx="' + sx(last[0]).toFixed(1) + '" cy="' + sy(last[1]).toFixed(1) + '" r="4" fill="var(--blue)"/>');
-      s.push('<text x="' + (sx(last[0]) + 6).toFixed(1) + '" y="' + (sy(last[1]) - 8).toFixed(1) + '" font-size="10.5" fill="var(--blue)">오늘</text>');
+      s.push('<text x="' + Math.min(W - 2, sx(last[0]) + 6).toFixed(1) + '" y="' + (sy(last[1]) - 8).toFixed(1) + '" font-size="10.5" fill="var(--blue)">현재</text>');
     }
 
     /* 선 끝 이름표 — 겹치지 않게 위아래로 밀어 **전부** 그린다(원본 labelLayout) */
@@ -1257,17 +1383,36 @@
     });
     s.push('</svg>');
     host.innerHTML = s.join('');
-    host.__ov = { series: series, today: today, todayPts: todayPts, scale: scale, sx: sx, pad: pad, W: W };
+    host.__ov = { series: series, today: today, todayOn: showToday, todayPts: todayPts, scale: scale, sx: sx, pad: pad, W: W };
 
-    /* 기본 읽기 줄 — 오늘 자리에서 */
-    var day = scale === 'trough' ? (today ? today.troughOffset : null) : (today ? today.offset : null);
-    el('#ovReadout', view).innerHTML = ovReadoutText(day, scale, today, series, view);
+    /* 기본 읽기 줄 — 현재 자리에서 */
+    var day = !today ? null
+      : (scale === 'trough' ? (showToday ? today.troughOffset : today.troughConf)
+        : (showToday ? today.offset : today.confOffset));
+    el('#ovReadout', view).innerHTML = ovReadoutText(day, scale, showToday ? today : null, series, view);
     el('#ovCaption', view).innerHTML = ovCaptionText(scale).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
-    el('#ovBasis', view).textContent = '오늘 기준 — ' + (today ? today.label : '값 없음(오늘 선을 그리지 않았습니다)') +
-      ' · ' + (OV.scale === 'trough' ? '저점' : '고점') + ' 기준 +' + (day === null ? '—' : day) + '거래일' +
-      (today ? ' · 오늘 선 ' + F.day(today.firstDate) + '~' + F.day(today.lastDate) + ' 낙폭 ' + F.pct(today.dd, 1) +
-        (today.liveDate ? ' (지금 점까지)' : ' (확정 종가까지)') : '') +
-      (day !== null && day > 252 ? ' · 오늘 구간이 축(+252거래일)을 넘어 끝점이 잘렸습니다' : '');
+    /* 차트 위 현재 낙폭 큰 숫자 — 차트의 '현재' 점·선과 같은 값에서 나온다 */
+    ovNowBadge(view, showToday, today);
+    el('#ovBasis', view).textContent = (showToday
+        ? '현재 — ' + (today ? today.label + ' · ^NDX 낙폭 ' + F.pct(today.dd, 1) : '값 없음(live·확정 모두 없음)')
+        : '현재 선을 껐습니다' + (today ? '(' + today.label + ' · ^NDX 낙폭 ' + F.pct(today.dd, 1) + ')' : '')) +
+      ' · 창 = ' + (scale === 'trough' ? '저점' : '고점') + ' 기준 ±' + ovWinText(OV.win) +
+      (OV.win > 1 ? ' (사례 자료는 고점 ±1년까지라 끝이 짧을 수 있음)' : '');
+  }
+
+  /* 차트 위 현재 낙폭 큰 숫자 — '현재' 선과 같은 값·같은 출처. 토글을 끄면 함께 숨긴다. */
+  function ovNowBadge(view, showToday, today) {
+    var big = el('#ovNowBig', view);
+    if (!big) return;
+    big.style.display = (showToday && today) ? '' : 'none';
+    if (!today) return;
+    var bdd = el('#ovNowDd', view);
+    if (bdd) {
+      bdd.textContent = F.pct(today.dd, 1);
+      bdd.className = 'num ' + (today.dd < 0 ? 'neg' : 'pos');
+    }
+    var bsrc = el('#ovNowSrc', view);
+    if (bsrc) bsrc.textContent = today.label;
   }
 
   function ovValueAt(pts, day, scale) {
@@ -1283,14 +1428,14 @@
   }
 
   function ovReadoutText(day, scale, today, series, view) {
-    if (day === null || day === undefined) return '오늘 값이 없어 읽기를 그리지 않습니다.';
+    if (day === null || day === undefined) return '현재 값이 없어 읽기를 그리지 않습니다.';
     var head = (scale === 'trough' ? '저점 +' : '고점 +') + day + '일' + (scale === 'pct' ? ' 낙폭' : '') + ' — ';
     var parts = [];
     if (today) {
       var tv = scale === 'trough'
         ? ovValueAt(today.trough.map(function (p) { return [p[0], 100 * (1 + p[1] / 100)]; }), day, scale)
         : ovValueAt(today.peak.map(function (p) { return [p[0], scale === 'pct' ? p[1] : 100 * (1 + p[1] / 100)]; }), day, scale);
-      parts.push({ k: '오늘', v: tv, c: 'var(--blue)' });
+      parts.push({ k: '현재', v: tv, c: 'var(--blue)' });
     }
     series.forEach(function (se) {
       parts.push({ k: se.short, v: ovValueAt(se.pts, day, scale), c: se.color });
@@ -1316,6 +1461,11 @@
     });
     var rows = cases.map(function (c) {
       var m = c.now_match;
+      /* 30·90·180거래일 뒤 수익률 — 자료에 없으면 (null) '—' 로 비운다 */
+      function fwd(v) {
+        if (v === null || v === undefined) return '<td class="mono dim">—</td>';
+        return '<td class="mono ' + (v < 0 ? 'neg' : 'pos') + '">' + F.pct(v, 1) + '</td>';
+      }
       return '<tr class="g-crashrow" data-case="' + c.id + '">' +
         '<td><b style="color:' + c.color + '">■</b> ' + esc(c.name) + '<div class="dim small">' + esc(c.tag) + ' · ' + esc(c.index) + '</div></td>' +
         '<td class="mono">' + F.day(c.peak) + '<div class="dim small">' + F.fixed(c.peak_close, 2) + '</div></td>' +
@@ -1325,7 +1475,7 @@
         '<td class="mono">' + F.int(c.days_to_recovery) + '</td>' +
         '<td class="mono">' + (m ? F.day(m.date) + '<div class="dim small">고점 +' + m.day + '일 · 낙폭 ' + F.pct(m.dd, 1) + '</div>' : '—') + '</td>' +
         '<td class="mono">' + (m ? F.num(m.distance, 2) : '—') + '</td>' +
-        '<td class="mono ' + (m && m.fwd30 !== null && m.fwd30 < 0 ? 'neg' : 'pos') + '">' + (m ? F.pct(m.fwd30, 1) : '—') + '</td>' +
+        fwd(m ? m.fwd30 : null) + fwd(m ? m.fwd90 : null) + fwd(m ? m.fwd180 : null) +
         '</tr>';
     }).join('');
 
@@ -1334,7 +1484,10 @@
       return '<a class="case-card" href="#/gauge/crash/' + c.id + '" style="border-left-color:' + c.color + '">' +
         '<div class="top"><span class="nm">' + esc(c.short) + '</span><span class="dd">' + F.pct(c.dd, 1) + '</span></div>' +
         '<div class="meta">' + esc(c.name) + ' · 저점까지 ' + F.int(c.days_to_trough) + '거래일</div>' +
-        (m ? '<div class="meta">닮은 날 ' + F.day(m.date) + ' (고점 +' + m.day + '일, 거리 ' + F.num(m.distance, 2) + ') → 30일 ' + F.pct(m.fwd30, 1) + '</div>' : '') +
+        (m ? '<div class="meta">닮은 날 ' + F.day(m.date) + ' (고점 +' + m.day + '일, 거리 ' + F.num(m.distance, 2) + ') → 30일 ' +
+          (m.fwd30 === null || m.fwd30 === undefined ? '—' : F.pct(m.fwd30, 1)) + ' · 90일 ' +
+          (m.fwd90 === null || m.fwd90 === undefined ? '—' : F.pct(m.fwd90, 1)) + ' · 180일 ' +
+          (m.fwd180 === null || m.fwd180 === undefined ? '—' : F.pct(m.fwd180, 1)) + '</div>' : '') +
         '</a>';
     }).join('');
 
@@ -1356,9 +1509,10 @@
       '<article class="panel">' +
         '<div class="tbl-wrap"><table class="tbl"><thead><tr>' +
           '<th>사례</th><th>고점</th><th>저점</th><th>낙폭</th><th>저점까지</th><th>회복까지</th>' +
-          '<th>지금과 닮은 날</th><th>거리</th><th>그 뒤 30일</th>' +
+          '<th>지금과 닮은 날</th><th>거리</th><th>30일</th><th>90일</th><th>180일</th>' +
         '</tr></thead><tbody>' + rows + '</tbody></table></div>' +
-        '<p class="note">거리 = 네 지표(낙폭·200일선·RSI·VIX)의 차이를 각 10눈금으로 나눈 평균. 작을수록 닮았습니다. VIX가 없던 1929·1987은 세 지표로만 계산합니다. 줄을 누르면 사례 상세가 열립니다.</p>' +
+        '<p class="note">오른쪽 세 열(30·90·180일)은 닮은 날 이후 그만큼 <b>거래일</b>이 지난 뒤의 수익률입니다. 자료에 없는 칸은 —로 비웠습니다. ' +
+          '거리 = 네 지표(낙폭·200일선·RSI·VIX)의 차이를 각 10눈금으로 나눈 평균. 작을수록 닮았습니다. VIX가 없던 1929·1987은 세 지표로만 계산합니다. 줄을 누르면 사례 상세가 열립니다.</p>' +
         '<div class="case-grid" style="margin-top:10px">' + cards + '</div>' +
       '</article>';
 
@@ -1617,6 +1771,7 @@
 
   /* 5분 갱신(live.js)이 새 live.json 을 받으면 이 화면도 다시 그린다 — 새 타이머를 만들지 않는다 */
   var NO_RECORD = false;
+  var LIVE_SIG = null;   /* 마지막으로 그린 live.json 지문 — 값이 그대로면 화면을 다시 그리지 않는다 */
   document.addEventListener('stockrebal:live', function () {
     dropValues();
     if (location.hash.indexOf('#/gauge') !== 0) return;
@@ -1624,6 +1779,13 @@
     if (!v || !v.querySelector('#gTop')) return;
     var ae = document.activeElement;
     if (ae && v.contains(ae) && /^(INPUT|SELECT|TEXTAREA)$/.test(ae.tagName)) return; /* 입력 중엔 손대지 않는다 */
+    /* 새 live.json 이 왔는데 값이 실제로 그대로면 다시 그리지 않는다(깜박임 방지).
+       '현재' 선도 같은 값으로 움직이므로 이 지문 하나로 함께 판단한다. */
+    var doc = (w.Live && w.Live.data) ? w.Live.data() : null;
+    var nd = ovNowPoint().dd;
+    var sig = String((doc && doc.updatedAt) || '') + '|' + (nd === null || nd === undefined ? 'x' : Number(nd).toFixed(2));
+    if (LIVE_SIG === sig) return;
+    LIVE_SIG = sig;
     var m = location.hash.match(/^#\/gauge\/crash\/([\w-]+)/);
     NO_RECORD = true;
     rerender(v, m ? m[1] : null);
@@ -1783,23 +1945,49 @@
       });
     });
 
-    /* 겹쳐 보기 — 저점 기준 창(1·2·3년) */
+    /* 겹쳐 보기 — 저점 기준 창(6개월 단위 0.5~3년) */
     var owin = el('#ovWin', view);
     if (owin) owin.addEventListener('input', function () {
-      OV.win = Number(owin.value) || 1;
+      var wv = Number(owin.value);
+      OV.win = OV_WINS.indexOf(wv) >= 0 ? wv : 1;
       S.set('crashWin', OV.win);
       var lab = el('#ovWinLab', view);
-      if (lab) lab.textContent = OV.win + '년';
+      if (lab) lab.textContent = ovWinText(OV.win);
       drawOverlap(view, Data.crashes.cases);
     });
 
-    /* 겹쳐 보기 — 사례 칩 켜고 끄기 */
+    /* 겹쳐 보기 — 사례 칩 켜고 끄기 (사례·전체·현재 한 곳에서) */
     els(view, '[data-ovcase]').forEach(function (b) {
       b.addEventListener('click', function () {
         var id = b.getAttribute('data-ovcase');
         var i = OV_OFF.indexOf(id);
         if (i >= 0) OV_OFF.splice(i, 1); else OV_OFF.push(id);
-        b.classList.toggle('on', OV_OFF.indexOf(id) < 0);
+        ovChipsSync(view, Data.crashes.cases);
+        drawOverlap(view, Data.crashes.cases);
+      });
+    });
+
+    /* 겹쳐 보기 — 전체 한 번에(사례 6개 + 현재) */
+    els(view, '[data-ovall]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        var cases = Data.crashes.cases;
+        var turnOn = !ovAllOn(cases);
+        OV_OFF.length = 0;
+        if (!turnOn) {
+          cases.forEach(function (c) { OV_OFF.push(c.id); });
+          OV_OFF.push('today');
+        }
+        S.set('crashTodayOff', !turnOn);
+        ovChipsSync(view, cases);
+        drawOverlap(view, cases);
+      });
+    });
+
+    /* 겹쳐 보기 — 현재 선 토글 */
+    els(view, '[data-ovtoday]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        ovSetToday(!ovTodayOn());
+        ovChipsSync(view, Data.crashes.cases);
         drawOverlap(view, Data.crashes.cases);
       });
     });

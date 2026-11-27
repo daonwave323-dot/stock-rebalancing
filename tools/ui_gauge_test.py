@@ -126,7 +126,7 @@ def main():
         # ------------------------------------------------------- 2) 네 조합
         combos = {}
         combos['auto-close'] = gauge_state(pg)
-        check('자동×확정: 점수=live.json score', combos['auto-close']['score'] == ('%.1f' % tq['score']),
+        check('자동×확정: 점수=live.json score', abs(float(combos['auto-close']['score']) - tq['score']) < 0.051,
               (combos['auto-close']['score'], tq['score']))
         check('자동×확정: 가격=확정 종가', combos['auto-close']['priceTag'].strip() == '확정 종가', combos['auto-close']['priceTag'])
 

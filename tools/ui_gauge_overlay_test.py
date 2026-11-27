@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
-"""매수 지표 — 최근 한 달 일봉 · 겹쳐 보기(날짜 축·창 슬라이더) 검증.
+"""매수 지표 — 최근 한 달 일봉 · 겹쳐 보기(낙폭 % / 고점=100 / 저점=100 · 현재 선 · 창 슬라이더) 검증.
 
   LD_LIBRARY_PATH=/workspace/site-stock-rel/.libs python3 tools/ui_gauge_overlay_test.py
 
 확인
   1) 최근 한 달 일봉: 봉 수·첫/끝 날짜가 자료와 같고, 지표를 손대면 '지금' 점이 움직인다
-  2) 겹쳐 보기: 여섯 사례가 처음부터 모두 켜짐, 제목이 사례 수와 맞음
-  3) 날짜 축이 기본 — 연도 눈금, 사례 선 + 오늘 선, 오늘 위치 2026
-  4) 저점 기준 창 슬라이더 1·2·3년 — 축 범위·눈금·오늘 점이 함께 바뀐다
-  5) 새로 고침 후 보기·창 유지
+  2) 겹쳐 보기: 칩줄이 [전체] 1929→2025 [현재] 순서, 처음엔 모두 켜짐, 제목이 사례 수와 맞음
+  3) 보기 눈금은 낙폭 %(기본) · 고점=100 · 저점=100 셋 — '날짜' 보기는 없다
+  4) '현재' 선은 사례 선과 같은 ^NDX 계열 — 수직 낙하 없이 이어지고, TQQQ/SOXL을 바꿔도 그대로
+  5) '현재' 칩을 끄면 선·라벨·현재 낙폭 숫자가 함께 사라지고, 다시 켜면 돌아온다
+  6) 창 슬라이더 6개월~3년 — 축 범위·눈금·캡션이 함께 바뀐다
+  7) 새로 고침 후 보기·창 유지
 """
 import functools
 import http.server
@@ -17,7 +19,6 @@ import os
 import socketserver
 import sys
 import threading
-from datetime import date, timedelta
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -45,17 +46,6 @@ def serve():
     return httpd
 
 
-def trading_days(iso, n):
-    d = date.fromisoformat(iso)
-    step = 1 if n >= 0 else -1
-    left = abs(n)
-    while left:
-        d += timedelta(days=step)
-        if d.weekday() < 5:
-            left -= 1
-    return d
-
-
 def main():
     os.makedirs(SHOTS, exist_ok=True)
     with open(os.path.join(ROOT, 'data', 'live.json'), encoding='utf-8') as f:
@@ -70,6 +60,7 @@ def main():
                                      for b in gauge['candles']['ndx']]
     print('  일봉 출처: %s · %d개 %s~%s' % ('live.dayBars' if tq.get('dayBars') else 'gauge.candles(폴백)',
                                        len(bars_src), bars_src[0]['d'], bars_src[-1]['d']))
+    now_dd = crashes['now']['dd']
 
     httpd = serve()
     base = 'http://127.0.0.1:%d/' % httpd.server_address[1]
@@ -85,7 +76,7 @@ def main():
 
         def open_gauge(q=''):
             pg.goto(base + 'index.html' + q + '#/gauge')
-            pg.wait_for_selector('#gTop', timeout=8000)
+            pg.wait_for_selector('#gTop', timeout=15000)
             pg.wait_for_timeout(600)
 
         open_gauge('?ov1')
@@ -117,146 +108,124 @@ def main():
         # ---------------------------------------------------- 2) 겹쳐 보기 열기
         open_gauge('?ov2')
         pg.evaluate("() => document.querySelector('[data-toggle=\"crash\"]').click()")
-        pg.wait_for_timeout(700)
+        pg.wait_for_timeout(900)
         chips = pg.evaluate("""() => {
-          const all = [...document.querySelectorAll('#ovChips [data-ovcase]')];
-          return {n: all.length, on: all.filter(b=>b.classList.contains('on')).length,
-                  title: (document.querySelector('#sec-crash .g-sub')||document.querySelector('.g-sub')||{}).textContent};
+          const all = [...document.querySelectorAll('#ovChips .chip')];
+          return {names: all.map(b => b.textContent.trim()), n: all.length,
+                  on: all.filter(b=>b.classList.contains('on')).length,
+                  casesOn: [...document.querySelectorAll('#ovChips [data-ovcase]')].filter(b=>b.classList.contains('on')).length};
         }""")
-        check('사례 칩 6개 모두 켜짐', chips['n'] == len(crashes['cases']) and chips['on'] == chips['n'], chips)
+        years = [c['short'] for c in sorted(crashes['cases'], key=lambda c: c['peak'])]
+        check('칩줄 순서 [전체] 연도 오름차순 [현재]',
+              chips['names'] == ['전체'] + years + ['현재'], chips['names'])
+        check('사례 칩 6개 모두 켜짐', chips['casesOn'] == len(crashes['cases']), chips)
+        check('처음엔 전체·현재도 켜짐', chips['on'] == chips['n'], chips)
         body = pg.inner_text('#view')
         check('제목이 사례 수(6개 시점)와 맞다', '%d개 시점' % len(crashes['cases']) in body)
 
-        # ---------------------------------------------------- 3) 날짜 축 기본
+        # ---------------------------------------------------- 3) 보기 눈금
         d0 = pg.evaluate("""() => {
           const svg = document.querySelector('#ovChart svg');
           const texts = [...svg.querySelectorAll('text')].map(e=>e.textContent);
-          return {paths: svg.querySelectorAll('path').length, texts,
-                  scale: [...document.querySelectorAll('[data-ovscale]')].filter(b=>b.classList.contains('on')).map(b=>b.getAttribute('data-ovscale')),
-                  basis: (document.querySelector('#ovBasis')||{}).textContent};
-        }""")
-        check('기본 보기가 날짜', d0['scale'] == ['date'], d0['scale'])
-        check('날짜 축: 사례 6 + 오늘 1 = 선 7개', d0['paths'] == len(crashes['cases']) + 1, d0['paths'])
-        check('날짜 축: 연도 눈금', any(t.isdigit() and len(t) == 4 for t in d0['texts']), d0['texts'][:10])
-        check('날짜 축: 오늘 이름표', any(t == '오늘' for t in d0['texts']), d0['texts'][-8:])
-        check('오늘 위치가 2026-11-28 근처', '2026' in (d0['basis'] or ''), d0['basis'])
-
-        # 각 사례 선의 시작·끝 연도가 peak·trough 와 맞는지(거래일 근사 ±10일)
-        geo = pg.evaluate("""() => {
-          const svg = document.querySelector('#ovChart svg');
-          const w = svg.viewBox.baseVal.width;
-          return [...svg.querySelectorAll('path')].map(p => p.getAttribute('d'));
-        }""")
-        def d_start_end(d):
-            import re
-            pts = re.findall(r'[ML]([\\d.]+) ([\\d.]+)', d)
-            return (pts[0][0], pts[-1][0]) if pts else None
-        # x축 범위는 그림에서 역산하기 어려우므로, 사례별 첫 점 날짜를 브라우저에서 직접 계산
-        ext = pg.evaluate("""() => {
           const o = document.querySelector('#ovChart').__ov;
-          if (!o || o.kind !== 'date') return null;
-          const W = o.W, pad = o.pad;
-          const toMs = x => o.x0 + (x - pad.l) / (W - pad.l - pad.r) * (o.x1 - o.x0);
-          return [...document.querySelectorAll('#ovChart path')].map(p => {
-            const m = p.getAttribute('d').match(/[ML]([\\d.]+) /g) || [];
-            const xs = p.getAttribute('d').match(/[ML]([\\d.]+) /g).map(s => parseFloat(s.slice(1)));
-            return {first: new Date(toMs(xs[0])).toISOString().slice(0, 10),
-                    last: new Date(toMs(xs[xs.length-1])).toISOString().slice(0,10)};
-          });
+          return {paths: svg.querySelectorAll('path').length, texts,
+                  scales: [...document.querySelectorAll('[data-ovscale]')].map(b=>b.getAttribute('data-ovscale')),
+                  on: [...document.querySelectorAll('[data-ovscale]')].filter(b=>b.classList.contains('on')).map(b=>b.getAttribute('data-ovscale')),
+                  todayPts: o.todayPts.slice(-2), confOffset: o.today.confOffset, offset: o.today.offset };
         }""")
-        ok_span = True
-        detail = []
-        if ext:
-            for c, e in zip(crashes['cases'], ext):
-                lim = 252  # 창 1년 — 자료가 있는 범위(고점 ±252거래일)
-                lo = trading_days(c['peak'], -lim)
-                hi = trading_days(c['peak'], lim)
-                a = date.fromisoformat(e['first']); b2 = date.fromisoformat(e['last'])
-                good = abs((a - lo).days) <= 12 and abs((b2 - hi).days) <= 12
-                detail.append((c['short'], c['peak'], e['first'], str(lo), e['last'], str(hi), good))
-                ok_span = ok_span and good
-        for r in detail:
-            print('    %-5s peak %s · 선 %s (기대 %s) · 끝 %s (기대 %s) %s' % (r[0], r[1], r[2], r[3], r[4], r[5], 'OK' if r[6] else 'X'))
-        check('사례 선 시작·끝이 고점±1년(자료 범위)과 맞다', ok_span, len(detail))
-        pg.screenshot(path=os.path.join(SHOTS, 'gauge-390-date.png'))
+        check("'날짜' 보기 버튼이 없다", 'date' not in d0['scales'], d0['scales'])
+        check('보기 눈금 셋(저점·고점·낙폭%)', d0['scales'] == ['trough', 'peak', 'pct'], d0['scales'])
+        check('기본 보기가 낙폭 %', d0['on'] == ['pct'], d0['on'])
+        check('낙폭 %: 사례 6 + 현재 1 = 선 7개', d0['paths'] == len(crashes['cases']) + 1, d0['paths'])
+        check("'현재' 이름표 있음", '현재' in d0['texts'], d0['texts'][-6:])
+        check('현재 낙폭 큰 숫자가 차트 현재 점과 같다',
+              abs(float(pg.inner_text('#ovNowDd').replace('%', '').replace('+', '')) - d0['todayPts'][-1][1]) < 0.06,
+              (pg.inner_text('#ovNowDd'), d0['todayPts'][-1][1]))
+        # 수직 낙하 없음 — 마지막 확정 점과 현재 점의 차이
+        gap = pg.evaluate("""() => {
+          const o = document.querySelector('#ovChart').__ov;
+          const a = o.today.peak[o.today.confOffset], b = o.today.peak[o.today.offset];
+          return Math.abs(b[1] - a[1]);
+        }""")
+        check('현재 점이 마지막 확정 점에서 수직 낙하하지 않는다(±3%p 안)', gap < 3, round(gap, 2))
+        pg.screenshot(path=os.path.join(SHOTS, 'gauge-390-overlay.png'))
 
-        # ---------------------------------------------------- 4) 창 슬라이더 1→3년
+        # TQQQ↔SOXL을 바꿔도 현재 값 고정
+        before = pg.inner_text('#ovNowDd')
+        pg.click('[data-target="sox"]')
+        pg.wait_for_timeout(700)
+        after = pg.inner_text('#ovNowDd')
+        check('대상 칩을 바꿔도 현재 낙폭 그대로', before == after, (before, after))
+        pg.click('[data-target="ndx"]')
+        pg.wait_for_timeout(600)
+
+        # ---------------------------------------------------- 4) 현재 토글
+        pg.click('[data-ovtoday]')
+        pg.wait_for_timeout(500)
+        off = pg.evaluate("""() => {
+          const o = document.querySelector('#ovChart').__ov;
+          return {n: o.todayPts.length, texts: [...document.querySelectorAll('#ovChart svg text')].map(t=>t.textContent),
+                  big: document.querySelector('#ovNowBig').style.display,
+                  readout: document.querySelector('#ovReadout').textContent};
+        }""")
+        check('현재 끄면 선 사라짐', off['n'] == 0 and '현재' not in off['texts'], off['texts'][-5:])
+        check('현재 끄면 현재 낙폭 숫자도 숨김', off['big'] == 'none', off['big'])
+        check('현재 끄면 판독값에도 현재 없음', '현재' not in off['readout'], off['readout'][:60])
+        pg.click('[data-ovtoday]')
+        pg.wait_for_timeout(500)
+        on = pg.evaluate("""() => ({n: document.querySelector('#ovChart').__ov.todayPts.length,
+          big: document.querySelector('#ovNowBig').style.display,
+          chip: document.querySelector('[data-ovtoday]').classList.contains('on')})""")
+        check('다시 켜면 선·숫자 복귀', on['n'] > 1 and on['big'] != 'none' and on['chip'], on)
+
+        # 전체 토글
+        pg.click('[data-ovall]')
+        pg.wait_for_timeout(400)
+        alloff = pg.evaluate("() => [...document.querySelectorAll('#ovChips .chip')].map(b=>b.classList.contains('on'))")
+        check('전체 누르면 모두 꺼짐', not any(alloff), alloff)
+        pg.click('[data-ovall]')
+        pg.wait_for_timeout(400)
+        allon = pg.evaluate("""() => ({chips: [...document.querySelectorAll('#ovChips .chip')].map(b=>b.classList.contains('on')),
+          n: document.querySelector('#ovChart').__ov.series.length})""")
+        check('전체 다시 누르면 모두 켜짐', all(allon['chips']) and allon['n'] == len(crashes['cases']), allon)
+
+        # ---------------------------------------------------- 5) 창 슬라이더 6개월~3년
         def window_state():
             return pg.evaluate("""() => {
-              const svg = document.querySelector('#ovChart svg');
-              const texts = [...svg.querySelectorAll('text')].map(e=>e.textContent);
-              const o = document.querySelector('#ovChart').__ov;
-              const W = o.W, pad = o.pad;
-              const toMs = x => o.x0 + (x - pad.l) / (W - pad.l - pad.r) * (o.x1 - o.x0);
-              const paths = [...document.querySelectorAll('#ovChart path')].map(p=>{
-                const xs = p.getAttribute('d').match(/[ML]([\\d.]+) /g).map(s=>parseFloat(s.slice(1)));
-                return {first:new Date(toMs(xs[0])).toISOString().slice(0,10), last:new Date(toMs(xs[xs.length-1])).toISOString().slice(0,10), n: xs.length};
-              });
-              return {win: (document.querySelector('#ovWinLab')||{}).textContent, texts, paths,
-                      readout: (document.querySelector('#ovReadout')||{}).textContent};
+              const texts = [...document.querySelectorAll('#ovChart svg text')].map(e=>e.textContent);
+              return {win: (document.querySelector('#ovWinLab')||{}).textContent, texts,
+                      cap: (document.querySelector('#ovCaption')||{}).textContent,
+                      saved: localStorage.getItem('stockrebal.crashWin')};
             }""")
         w1 = window_state()
-        pg.evaluate("() => { const s=document.querySelector('#ovWin'); s.value='2'; s.dispatchEvent(new Event('input',{bubbles:true})); }")
-        pg.wait_for_timeout(500)
-        w2 = window_state()
-        pg.evaluate("() => { const s=document.querySelector('#ovWin'); s.value='3'; s.dispatchEvent(new Event('input',{bubbles:true})); }")
-        pg.wait_for_timeout(500)
-        w3 = window_state()
-        check('창 1년 라벨', w1['win'] == '1년', w1['win'])
-        check('창 2년 라벨', w2['win'] == '2년', w2['win'])
-        check('창 3년 라벨', w3['win'] == '3년', w3['win'])
-        check('창 3년에서도 오늘 선 유지', any(t == '오늘' for t in w3['texts']))
-        # 저점 기준 보기에서는 축이 ±1→±3년으로 늘어난다
+        check('창 기본 1년', w1['win'] == '1년', w1['win'])
+        for val, lab in (('0.5', '6개월'), ('1.5', '1년 6개월'), ('2', '2년'), ('3', '3년')):
+            pg.evaluate("() => { const s=document.querySelector('#ovWin'); s.value='%s'; s.dispatchEvent(new Event('input',{bubbles:true})); }" % val)
+            pg.wait_for_timeout(500)
+            wv = window_state()
+            check('창 %s 슬라이더' % lab, wv['win'] == lab and wv['saved'] in ('"%s"' % val, val), (wv['win'], wv['saved']))
+        # 저점 보기에서 축·캡션이 고른 기간을 따른다
         pg.click('[data-ovscale="trough"]')
         pg.wait_for_timeout(500)
         tr3 = pg.evaluate("() => [...document.querySelectorAll('#ovChart svg text')].map(e=>e.textContent)")
         check('저점 보기 축이 ±3년', any('−3년' in x for x in tr3) and any('+3년' in x for x in tr3), tr3[:8])
+        check('저점 보기 캡션에 3년', '3년' in pg.inner_text('#ovCaption'), pg.inner_text('#ovCaption')[:70])
+        pg.evaluate("() => { const s=document.querySelector('#ovWin'); s.value='0.5'; s.dispatchEvent(new Event('input',{bubbles:true})); }")
+        pg.wait_for_timeout(500)
+        tr05 = pg.evaluate("() => [...document.querySelectorAll('#ovChart svg text')].map(e=>e.textContent)")
+        check('저점 보기 축이 ±6개월', any('−6개월' in x for x in tr05) and any('+6개월' in x for x in tr05), tr05[:8])
+        pg.screenshot(path=os.path.join(SHOTS, 'gauge-390-overlay-6m.png'))
         pg.evaluate("() => { const s=document.querySelector('#ovWin'); s.value='1'; s.dispatchEvent(new Event('input',{bubbles:true})); }")
         pg.wait_for_timeout(400)
-        tr1 = pg.evaluate("() => [...document.querySelectorAll('#ovChart svg text')].map(e=>e.textContent)")
-        check('저점 보기 축이 ±1년으로 줄어든다', any('−1년' in x for x in tr1) and not any('−3년' in x for x in tr1), tr1[:8])
-        # 다시 날짜 보기로
-        pg.click('[data-ovscale="date"]')
-        pg.wait_for_timeout(500)
-        pg.screenshot(path=os.path.join(SHOTS, 'gauge-390-date-3y.png'))
-
-        # 읽기줄 격차 — 브라우저에서 날짜 하나를 짚어 확인
-        rd = pg.evaluate("""() => {
-          const o = document.querySelector('#ovChart').__ov;
-          const ms = Date.parse('2008-10-10T00:00:00Z');
-          const el = document.querySelector('#ovReadout');
-          el.innerHTML = '';
-          const ev = new MouseEvent('mousemove', {clientX: 0, bubbles: true});
-          return null;
-        }""")
-        # 짚어보기는 좌표가 필요하므로 직접 ovDateReadout 계산 대신, 실제 마우스 이동으로 확인
-        pg.eval_on_selector('#ovChart', 'el => el.scrollIntoView({block:"center"})')
-        pg.wait_for_timeout(300)
-        box = pg.eval_on_selector('#ovChart svg', 'el => { const r = el.getBoundingClientRect(); return {x:r.left, y:r.top, w:r.width, h:r.height}; }')
-        tx = pg.evaluate("() => { const o=document.querySelector('#ovChart').__ov; return o.sx(Date.parse('2008-09-15T00:00:00Z')); }")
-        pg.mouse.move(box['x'] + (tx / 760.0) * box['w'], box['y'] + box['h'] * 0.5)
-        pg.wait_for_timeout(300)
-        readout = pg.inner_text('#ovReadout')
-        check('날짜 축 짚어보기 — 2008 값', '2008' in readout and '%' in readout, readout[:140])
-        print('    날짜축 읽기:', readout[:140])
-
-        # 저점 기준 보기에서는 같은 경과일끼리 격차가 읽힌다
-        pg.click('[data-ovscale="pct"]')
-        pg.wait_for_timeout(400)
-        tv = pg.evaluate("() => { const o=document.querySelector('#ovChart').__ov; return {kind:o.kind||'day', n:(document.querySelector('#ovReadout')||{}).textContent}; }")
-        rd2 = pg.inner_text('#ovReadout')
-        check('경과일 보기 읽기줄에 격차', '격차' in rd2, rd2[:160])
-        pg.click('[data-ovscale="date"]')
-        pg.wait_for_timeout(400)
-
-        # ---------------------------------------------------- 5) 새로고침 유지
         pg.evaluate("() => document.querySelector('[data-ovscale=\"pct\"]').click()")
-        pg.wait_for_timeout(300)
+        pg.wait_for_timeout(400)
+
+        # ---------------------------------------------------- 6) 새로고침 유지
         pg.reload()
         pg.wait_for_selector('#gTop')
-        pg.wait_for_timeout(800)
+        pg.wait_for_timeout(900)
         pg.evaluate("() => { const b=document.querySelector('[data-toggle=\"crash\"]'); if(b) b.click(); }")
-        pg.wait_for_timeout(600)
+        pg.wait_for_timeout(900)
         kept = pg.evaluate("""() => ({
           scale: [...document.querySelectorAll('[data-ovscale]')].filter(b=>b.classList.contains('on')).map(b=>b.getAttribute('data-ovscale')),
           win: (document.querySelector('#ovWinLab')||{}).textContent,

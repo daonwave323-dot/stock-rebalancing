@@ -31,6 +31,8 @@
 .g-sub + .g-cap{color:var(--dim);font-size:11.5px;margin:0 0 6px}
 .g-sub.mt{margin-top:16px}
 .g-sec{padding:0;overflow:hidden}
+/* 밸류게이지 카드 바로 아래에 온 기록 섹션 — 카드 아래 희귀도 설명줄과 붙지 않게 */
+#gRarityNote + .g-sec{margin-top:14px}
 .g-sechead{display:block;width:100%;text-align:left;background:none;border:0;color:inherit;font:inherit;padding:16px 18px;cursor:pointer;min-height:64px}
 .g-sechead:hover{background:rgba(255,255,255,.02)}
 .g-sechead .t{display:flex;align-items:center;gap:8px;font-size:16px;font-weight:700;letter-spacing:-.2px}
