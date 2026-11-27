@@ -52,24 +52,26 @@
     return String(s).replace(/^\d{4}-/, '');
   }
 
-  /* live.json 가져오기.
-     깃허브 페이지(Pages)는 커밋 뒤 빌드가 한 번 더 돌아 몇 분 늦다. 그래서 원본 저장소의
-     파일(raw.githubusercontent, CORS 열려 있음)을 먼저 보고, 그것이 안 되면 같은 사이트의
-     data/live.json 을 쓴다. 둘 다 없으면 조용히 실패하고 사이트는 스냅샷으로 돈다. */
+  /* live.json 가져오기 — 같은 파일을 두 곳에서 동시에 받아 **더 새 것**을 쓴다.
+     · 저장소 원본(raw.githubusercontent): 커밋 몇 초 뒤 갱신되지만 CDN 캐시가 몇 분 있다.
+     · 깃허브 페이지 사본: 빌드가 한 번 돌아야 갱신되지만(1~3분) 캐시는 짧다.
+     둘 다 없으면 조용히 실패하고 사이트는 스냅샷으로 돈다. */
+  function fetchJson(url) {
+    return nativeFetch(url + '?t=' + Date.now(), { cache: 'no-store' }).then(function (r) {
+      if (!r.ok) throw new Error(url + ' ' + r.status);
+      return r.json();
+    });
+  }
+
   function fetchLive() {
-    var t = '?t=' + Date.now();
     var isLocal = /^(localhost|127\.0\.0\.1|\[::1\]|0\.0\.0\.0)$/.test(location.hostname);
-    var head = isLocal
-      ? Promise.reject(new Error('로컬 확인 — 저장소 원본은 보지 않는다'))
-      : nativeFetch(RAW + t, { cache: 'no-store' }).then(function (r) {
-        if (!r.ok) throw new Error('raw live.json ' + r.status);
-        return r.json();
-      });
-    return head.catch(function (e) {
-      return nativeFetch(REL + t, { cache: 'no-store' }).then(function (r) {
-        if (!r.ok) throw new Error('live.json ' + r.status);
-        return r.json();
-      }).catch(function () { throw e; });
+    var fromRaw = isLocal ? Promise.resolve(null) : fetchJson(RAW).catch(function () { return null; });
+    var fromSite = fetchJson(REL).catch(function () { return null; });
+    return Promise.all([fromRaw, fromSite]).then(function (r) {
+      var got = r.filter(function (d) { return d && d.updatedAt; });
+      if (!got.length) throw new Error('live.json 을 받지 못했습니다');
+      got.sort(function (a, b) { return String(b.updatedAt).localeCompare(String(a.updatedAt)); });
+      return got[0];
     });
   }
 
@@ -230,7 +232,7 @@
       parts.push('실시간(추정) TQQQ ' + Number(t.scoreLive).toFixed(1) + ' · SOXL ' + Number(x.scoreLive).toFixed(1) +
         ' — 지금 값을 진행 중인 봉으로 얹은 참고값입니다(확정 아님).');
     }
-    parts.push('5분 주기지만 실제로는 5~15분 늦을 수 있습니다. 판단 근거로 쓰지 마세요.');
+    parts.push('5분 주기지만 깃허브 사정으로 10~20분 늦을 수 있습니다. 판단 근거로 쓰지 마세요.');
     var ageMin = null;
     if (L.updatedAt) {
       var ts = Date.parse(L.updatedAt);
