@@ -18,7 +18,7 @@ import sys
 import threading
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')
-SHOTS = os.path.join(ROOT, 'screens')
+SHOTS = os.path.join(ROOT, 'screens', 'rank')   # 이 시험 전용 폴더 — 다른 화면의 기준 캡처를 덮지 않는다
 
 results = []
 console = []
