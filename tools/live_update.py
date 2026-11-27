@@ -259,6 +259,112 @@ def clock_session(now_et):
 SESSION_KO = {"pre": "프리마켓", "regular": "정규장", "post": "애프터마켓", "closed": "장 마감"}
 
 
+# ---------------------------------------------------------------- 국장(한국) 시세
+# 정적 사이트라 탭에서 넣은 종목이 이 갱신 목록에 자동으로 실리지는 못한다.
+# 그래서 대표 종목을 미리 받아 두고, 목록에 없는 종목은 화면이 증시 스냅샷(data/market.json)
+# 값으로 채운다(그 값도 없으면 '값 없음'으로 둔다 — 지어내지 않는다).
+KR_SYMBOLS = [
+    ("005930.KS", "삼성전자"), ("000660.KS", "SK하이닉스"), ("373220.KS", "LG에너지솔루션"),
+    ("207940.KS", "삼성바이오로직스"), ("005380.KS", "현대차"), ("000270.KS", "기아"),
+    ("068270.KS", "셀트리온"), ("035420.KS", "NAVER"), ("035720.KS", "카카오"),
+    ("051910.KS", "LG화학"), ("006400.KS", "삼성SDI"), ("005490.KS", "POSCO홀딩스"),
+    ("012330.KS", "현대모비스"), ("028260.KS", "삼성물산"), ("105560.KS", "KB금융"),
+    ("055550.KS", "신한지주"), ("247540.KQ", "에코프로비엠"), ("086520.KQ", "에코프로"),
+    ("196170.KQ", "알테오젠"), ("028300.KQ", "HLB"),
+]
+KST = timezone(timedelta(hours=9))
+NAVER_KR = "https://polling.finance.naver.com/api/realtime/domestic/stock/"
+KR_OPEN_MIN, KR_CLOSE_MIN = 9 * 60, 15 * 60 + 30
+
+
+def kst_label(ts):
+    """시각 → '11-27 15:30'(KST)."""
+    if ts is None:
+        return None
+    try:
+        return datetime.fromtimestamp(int(ts), KST).strftime("%m-%d %H:%M")
+    except Exception:
+        return None
+
+
+def kr_clock(now_kst, state=""):
+    """국내 정규장 세션 — 09:00~15:30 KST. 주말·휴장일은 장 마감.
+
+    미국장(프리·정규·애프터)과 달리 국장은 정규장 하나만 다룬다. 야후가 알려 준
+    marketState 가 CLOSED 인데 시계는 장중이면 휴장일로 본다.
+    """
+    if now_kst.weekday() >= 5:
+        return "closed", "주말 휴장"
+    m = now_kst.hour * 60 + now_kst.minute
+    if KR_OPEN_MIN <= m <= KR_CLOSE_MIN:
+        if state == "CLOSED":
+            return "closed", "휴장일(장 마감)"
+        return "regular", "국장 정규장"
+    if m < KR_OPEN_MIN:
+        return "closed", "국장 장전"
+    return "closed", "국장 장 마감"
+
+
+def naver_names(codes):
+    """국내 종목 한글 이름 — 네이버 시세 응답(키 없음, 한 번에 여러 종목). 실패하면 빈 dict."""
+    out = {}
+    if not codes:
+        return out
+    try:
+        req = urllib.request.Request(NAVER_KR + ",".join(codes),
+                                     headers={"User-Agent": UA, "Accept": "application/json"})
+        js = json.loads(urllib.request.urlopen(req, timeout=12).read())
+        for d in js.get("datas") or []:
+            code = str(d.get("itemCode") or "")
+            if code:
+                out[code] = {"name": d.get("stockName"),
+                             "suffix": ((d.get("stockExchangeType") or {}).get("code") or "")}
+    except Exception:
+        return out
+    return out
+
+
+def kr_record(now_kst, sym, quote, meta, name_ko):
+    """국장 한 종목 — 미국장 심볼과 같은 이름을 쓰되 통화는 KRW, 시각은 KST."""
+    code = sym.split(".")[0]
+    q = quote or {}
+    m = meta or {}
+    reg = q.get("regularMarketPrice") or m.get("regularMarketPrice")
+    prev = q.get("regularMarketPreviousClose") or m.get("previousClose") or m.get("chartPreviousClose")
+    ts = q.get("regularMarketTime") or m.get("regularMarketTime")
+    state = str(q.get("marketState") or m.get("marketState") or "").upper()
+    session, label = kr_clock(now_kst, state)
+    chg = (float(reg) / float(prev) - 1) * 100 if (reg and prev) else None
+    cap = q.get("marketCap")
+    return {
+        "symbol": sym, "code": code, "market": "kr",
+        "name": name_ko or q.get("shortName") or m.get("shortName") or sym,
+        "nameEn": q.get("longName") or q.get("shortName") or m.get("shortName"),
+        "currency": "KRW",
+        "last": round(float(reg), 2) if reg is not None else None,
+        "lastTime": iso(ts), "lastTimeKst": kst_label(ts),
+        "changePct": round(chg, 3) if chg is not None else None,
+        "previousClose": round(float(prev), 2) if prev else None,
+        "regularClose": round(float(reg), 2) if reg is not None else None,
+        "regularCloseTime": iso(ts), "regularCloseKst": kst_label(ts),
+        "session": session, "sessionLabel": label,
+        "sessionPrice": round(float(reg), 2) if (reg is not None and session == "regular") else None,
+        "sessionTime": iso(ts) if session == "regular" else None,
+        "sessionKst": kst_label(ts) if session == "regular" else None,
+        "exchangeTz": "Asia/Seoul",
+        "sessionChangePct": round(chg, 3) if (chg is not None and session == "regular") else None,
+        "sessionNote": "국장 09:00~15:30 KST · marketState=" + (state or "?"),
+        "marketState": state or None,
+        "volume": q.get("regularMarketVolume"),
+        "dayHigh": q.get("regularMarketDayHigh"), "dayLow": q.get("regularMarketDayLow"),
+        "fiftyTwoWeekHigh": q.get("fiftyTwoWeekHigh"), "fiftyTwoWeekLow": q.get("fiftyTwoWeekLow"),
+        "marketCap": cap, "marketCapCurrency": "KRW" if cap is not None else None,
+        "marketCapText": cap_text(cap, "KRW") if cap is not None else None,
+        "marketCapAsOf": iso(ts) if cap is not None else None,
+        "source": "yahoo-quote(국장 지연)",
+    }
+
+
 # ---------------------------------------------------------------- 받아오기
 
 class Fetcher:
@@ -818,6 +924,71 @@ def main(argv=None):
             continue
         symbols_out[sym] = quote_only(now_et, sym, q, fxinfo)
 
+    # 국장 — 미국장 필수 심볼과 분리해 받는다. 한 종목이 실패해도 그 종목만 빠지고 파일은 쓴다.
+    kr_syms = {}
+    kr_partial = []
+    kr_error = None
+    now_kst = now_utc.astimezone(KST)
+    kr_doc = {"session": None, "sessionLabel": None, "kst": now_kst.strftime("%Y-%m-%d %H:%M"),
+              "open": "09:00", "close": "15:30", "symbols": [], "partial": []}
+    try:
+        names = naver_names([s.split(".")[0] for s, _ in KR_SYMBOLS])
+        try:
+            kr_quotes = fx.quotes([s for s, _ in KR_SYMBOLS]) or {}
+        except Exception as e:  # noqa: BLE001
+            kr_quotes = {}
+            kr_error = "quote: " + str(e)[:80]
+        for sym, name_ko in KR_SYMBOLS:
+            code = sym.split(".")[0]
+            q = kr_quotes.get(sym) or {}
+            meta = {}
+            if not q.get("regularMarketPrice"):
+                try:  # quote 에 없으면 chart 메타로 한 번 더
+                    js = fx.chart(sym, rng="1d", interval="1d")
+                    meta = (js["chart"]["result"][0].get("meta") or {})
+                except Exception as e:  # noqa: BLE001
+                    prev = (old.get("symbols") or {}).get(sym)
+                    if prev and prev.get("market") == "kr":
+                        kr_syms[sym] = prev
+                    kr_partial.append(code)
+                    kr_error = kr_error or (code + ": " + str(e)[:80])
+                    continue
+            try:
+                nm = (names.get(code) or {}).get("name") or name_ko
+                rec = kr_record(now_kst, sym, q, meta, nm)
+                if rec.get("last") is None:
+                    raise RuntimeError("값 없음")
+                suf = (names.get(code) or {}).get("suffix")
+                if suf:
+                    rec["suffix"] = suf
+                kr_syms[sym] = rec
+            except Exception as e:  # noqa: BLE001
+                prev = (old.get("symbols") or {}).get(sym)
+                if prev and prev.get("market") == "kr":
+                    kr_syms[sym] = prev
+                kr_partial.append(code)
+                kr_error = kr_error or (code + ": " + str(e)[:80])
+        kr_session, kr_label = kr_clock(now_kst, "")
+        # 시계는 장중인데 모두 CLOSED 면 휴장일로 적는다
+        states = [r.get("marketState") for r in kr_syms.values() if r.get("marketState")]
+        mnow = now_kst.hour * 60 + now_kst.minute
+        if (states and all(s == "CLOSED" for s in states) and now_kst.weekday() < 5
+                and KR_OPEN_MIN <= mnow <= KR_CLOSE_MIN):
+            kr_session, kr_label = "closed", "휴장일(장 마감)"
+        kr_doc.update({
+            "session": kr_session, "sessionLabel": kr_label,
+            "kst": now_kst.strftime("%Y-%m-%d %H:%M"),
+            "note": ("국내 정규장 09:00~15:30 KST · 미국장과 세션이 다름 · "
+                     "지연될 수 있음. 목록 밖 종목은 화면이 증시 스냅샷으로 채운다."),
+            "symbols": list(kr_syms), "partial": kr_partial,
+        })
+        if kr_error:
+            kr_doc["error"] = kr_error
+        symbols_out.update(kr_syms)
+    except Exception as e:  # noqa: BLE001 — 국장 실패가 미국장 파일을 막지 않는다
+        errors.append("kr: " + str(e)[:120])
+        kr_doc.update({"symbols": list(kr_syms), "partial": kr_partial, "error": str(e)[:160]})
+
     market = {
         "session": clock_session(now_et),
         "sessionLabel": SESSION_KO.get(clock_session(now_et)),
@@ -843,6 +1014,7 @@ def main(argv=None):
         "updatedAt": now_utc.isoformat(timespec="seconds"),
         "updatedAtKst": now_utc.astimezone(timezone(timedelta(hours=9))).strftime("%Y-%m-%d %H:%M"),
         "market": market,
+        "kr": kr_doc,
         "fx": fxinfo,
         "required": REQUIRED,
         "watchlistCount": len(watch),
@@ -867,8 +1039,8 @@ def main(argv=None):
     os.replace(tmp, args.out)
 
     tq = symbols_out.get("TQQQ", {})
-    print("live.json: %d심볼 · %s · TQQQ %s(%s) 점수 %s / 실시간 %s · partial %d · calls %d"
-          % (len(symbols_out), market["session"], tq.get("last"), tq.get("session"),
+    print("live.json: %d심볼 (국장 %d) · %s · TQQQ %s(%s) 점수 %s / 실시간 %s · partial %d · calls %d"
+          % (len(symbols_out), len(kr_syms), market["session"], tq.get("last"), tq.get("session"),
              tq.get("score"), tq.get("scoreLive"), len(partial), fx.calls))
     return 0
 

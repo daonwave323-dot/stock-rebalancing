@@ -214,6 +214,23 @@ ul.list li{margin:3px 0}
 .footer-in{max-width:1180px;margin:0 auto;padding:18px;display:flex;gap:20px;justify-content:space-between;flex-wrap:wrap;font-size:12.5px}
 .footer p{margin:2px 0}
 
+/* 리밸런싱 — 미국장·국장 탭, 환율과 두 시장 합계 줄 */
+.reb-fx{margin-top:12px;border-top:1px solid var(--line);padding-top:10px}
+.reb-fx .reb-fx-row{gap:8px;align-items:center;margin-bottom:8px}
+.reb-fx .reb-fx-row label{font-size:12.5px;color:var(--tx2);white-space:nowrap}
+.reb-fx .fx-in{display:inline-flex;align-items:center;gap:5px}
+.reb-fx .fx-in input{width:96px;min-width:80px;background:var(--sunken);border:1px solid var(--line2);border-radius:8px;color:var(--tx);padding:6px 8px;font:inherit;font-size:13px;text-align:right;font-variant-numeric:tabular-nums}
+.reb-fx .fx-in input:focus{outline:2px solid #4a6b96;outline-offset:0}
+.reb-sum{margin-top:2px}
+.mkt-tabs.reb-tabs .tab{color:var(--tx2);background:transparent}
+.mkt-tabs.reb-tabs .tab.on{background:var(--panel2);color:#eef2f8;border-color:var(--blue);box-shadow:inset 0 0 0 1px var(--blue)}
+.reb-sum dd{font-size:15px}
+.reb-sum div.sum{background:var(--panel2);border-color:var(--line2)}
+.reb-sum div.sum dd{font-size:16.5px}
+.tbl td .tnm{font-size:11px;color:var(--dim);line-height:1.3;margin-top:2px;max-width:160px;white-space:normal;text-align:left;word-break:keep-all;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.tbl-wrap + .empty{border:1px solid var(--line);border-top:0;border-radius:0 0 12px 12px;margin-top:-1px}
+
 /* toast */
 .toast{position:fixed;left:50%;bottom:24px;transform:translate(-50%,20px);background:#31394a;border:1px solid var(--line2);color:#f2f5fa;padding:10px 16px;border-radius:11px;font-size:13.5px;box-shadow:0 10px 40px rgba(9,12,18,.45);opacity:0;pointer-events:none;transition:opacity .2s,transform .2s;z-index:60;max-width:90vw}
 .toast.on{opacity:1;transform:translate(-50%,0)}
@@ -232,6 +249,9 @@ ul.list li{margin:3px 0}
   .form-grid .span3{grid-column:span 3}
 }
 @media (max-width:680px){
+  .reb-fx .fx-in input{width:86px}
+  .reb-sum{grid-template-columns:1fr}
+  .tbl td .tnm{max-width:96px;font-size:10.5px}
   .tbl{font-size:12px}
   .tbl th,.tbl td{padding:7px 7px}
   .tbl th{font-size:11.5px}

@@ -64,7 +64,9 @@
       Mkt.watch(m).forEach(function (x) { out[String(x.sym).toUpperCase()] = 1; });
     });
     (function () {
-      var hold = S.get('holdings', []) || [];
+      /* 보유는 미국장·국장 두 키에 나뉘어 있다(예전 한 벌 키도 함께 본다). */
+      var hold = (S.get('holdings.us', []) || []).concat(S.get('holdings.kr', []) || []);
+      if (!hold.length) hold = S.get('holdings', []) || [];
       hold.forEach(function (r) { if (r.sym) out[String(r.sym).toUpperCase()] = 1; });
     })();
     return out;

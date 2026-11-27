@@ -130,7 +130,9 @@
     });
     var hold = view.querySelector('[data-tax-hold]');
     if (hold) hold.addEventListener('click', function () {
-      var hs = S.get('holdings', []) || [];
+      /* 보유는 이제 시장별 키(holdings.us·holdings.kr)에 나뉘어 있다. 예전 한 벌 키도 함께 본다. */
+      var hs = (S.get('holdings.us', []) || []).concat(S.get('holdings.kr', []) || []);
+      if (!hs.length) hs = S.get('holdings', []) || [];
       var out = [];
       hs.forEach(function (r) {
         if (!r.sym || String(r.sym).toUpperCase() === 'CASH') return;
@@ -582,14 +584,21 @@
   function applyImport(view) {
     var rep = state.imp;
     if (!rep || !rep.ok) return;
-    var list = S.get('holdings', []) || [];
+    /* 시장별 보유(holdings.us·holdings.kr)에 넣는다 — 리밸런싱 탭이 그 키를 읽는다. */
+    var us = S.get('holdings.us', null);
+    if (Object.prototype.toString.call(us) !== '[object Array]') us = S.get('holdings', []) || [];
+    var kr = S.get('holdings.kr', []);
+    if (Object.prototype.toString.call(kr) !== '[object Array]') kr = [];
+    var isKr = function (s) { return /^\d{6}$/.test(String(s || '').trim()); };
     var updated = 0, added = 0;
     rep.rows.forEach(function (r) {
+      var tick = String(r.ticker || r.name || '').trim();
+      var list = isKr(tick) ? kr : us;
       var idx = list.findIndex(function (h) {
-        var hs = String(h.sym || '').toUpperCase(), rs = String(r.ticker || r.name).toUpperCase();
-        return hs && rs && (hs === rs || (r.market === 'kr' && hs === r.ticker));
+        var hs = String(h.sym || '').toUpperCase(), rs = tick.toUpperCase();
+        return hs && rs && (hs === rs || (r.market === 'kr' && hs === rs.replace(/\.(KS|KQ)$/, '')));
       });
-      var px = Mkt.ready ? (Mkt.quote(r.ticker) || {}).regPrice : null;
+      var px = Mkt.ready ? (Mkt.quote(tick) || {}).regPrice : null;
       if (idx >= 0) {
         list[idx].qty = r.qty;
         if (r.avg > 0) list[idx].avg = r.avg;
@@ -597,11 +606,13 @@
         updated++;
       } else {
         list.push({ id: 'i' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
-          sym: r.ticker || r.name, qty: r.qty, avg: r.avg || null, price: px == null ? null : px, target: 0 });
+          sym: tick, qty: r.qty, avg: r.avg || null, price: px == null ? null : px, target: 0 });
         added++;
       }
     });
-    S.set('holdings', list);
+    S.set('holdings.us', us);
+    S.set('holdings.kr', kr);
+    S.set('holdings', us);   /* 예전 키를 읽는 화면(홈·일정)을 위해 */
     state.imp = null;
     state.impErr = '';
     toast(updated + '종목 갱신 · ' + added + '종목 추가');
@@ -722,8 +733,10 @@
   var BACKUP_MAGIC = 'stockrebal-backup';
 
   var SETTINGS_KEYS = [
-    ['holdings', '보유 표'], ['journal', '매매일지'], ['verify', '검증 기록'], ['principles', '원칙'],
-    ['settings', '리밸런싱 설정'], ['watch.us', '관심 종목(미국)'], ['watch.kr', '관심 종목(국내)'],
+    ['holdings.us', '보유 표(미국장)'], ['holdings.kr', '보유 표(국장)'],
+    ['settings.us', '리밸런싱 설정(미국장)'], ['settings.kr', '리밸런싱 설정(국장)'], ['fx', '환율(직접 입력)'],
+    ['holdings', '보유 표(예전 키)'], ['journal', '매매일지'], ['verify', '검증 기록'], ['principles', '원칙'],
+    ['settings', '리밸런싱 설정(예전 키)'], ['watch.us', '관심 종목(미국)'], ['watch.kr', '관심 종목(국내)'],
     ['notify', '알림 설정'], ['subscribers', '구독 신청'], ['mkt.maoff', '차트 이동평균선']
   ];
 
