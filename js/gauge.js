@@ -2054,7 +2054,9 @@
         if (!isNaN(ts)) ageMin = Math.round((Date.now() - ts) / 60000);
       }
       var mk = j.market || {};
-      var liveSess = mk.session === 'pre' || mk.session === 'regular' || mk.session === 'post';
+      /* 반나절 장 뒤에는 market.session 이 'regular' 로 남을 수 있다 — 봉 표시는 그 종목의
+         scoreLiveBasis(진행 중인 봉을 얹었는지)로 정한다. post 면 그날 봉은 이미 끝난 것으로 본다. */
+      var liveSess = e.scoreLiveBasis === 'pre' || e.scoreLiveBasis === 'regular';
       return {
         score: num(e.scoreLive), values: e.scoreLiveValues || null,
         asOf: e.scoreLiveAsOf || null,
