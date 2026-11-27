@@ -4,8 +4,10 @@
   LD_LIBRARY_PATH=/workspace/site-stock-rel/.libs python3 tools/ui_gauge_test.py
 
 확인
-  1) 맨 위가 '매수 지표 입력 · 지표 추적' 한 섹션이고, 값 직접 입력(가격·VIX 칸·이 값으로 계산)이 없다
-  2) 자동×확정 / 자동×실시간 / 수동×확정 / 수동×실시간 네 조합의 여섯 값·가격·점수·레이더 좌표
+  1) 화면 순서가 칩·가격·기준 → 밸류게이지 카드 → … → 폭락 비교 → 매수 지표 입력(접힘) → 지표 기록이고,
+     입력 섹션은 기본 접힘·머리 줄에 지금 점수·기준, 접기/펼치기(터치·키보드)와 새로고침 유지
+  2) 값 직접 입력(가격·VIX 칸·이 값으로 계산)이 없다
+  3) 자동×확정 / 자동×실시간 / 수동×확정 / 수동×실시간 네 조합의 여섯 값·가격·점수·레이더 좌표
   3) 슬라이더(낙폭·200일선 이격)를 움직이면 점수·가격·레이더·막대가 같은 값에서 따라온다(손계산 대조)
   4) 새로 고침 뒤에도 모드·기준 유지, 홈과 점수 0.1 어긋남 없음
   5) 390×844 캡처
@@ -69,7 +71,11 @@ def gauge_state(pg):
       basisOn: [...document.querySelectorAll('[data-basis]')].filter(b=>b.classList.contains('on')).map(b=>b.getAttribute('data-basis')),
       modeOn: [...document.querySelectorAll('[data-mode]')].filter(b=>b.classList.contains('on')).map(b=>b.getAttribute('data-mode')),
       hasPx: !!document.querySelector('#gPx'), hasCalc: !!document.querySelector('#gCalc'),
-      order: [...document.querySelectorAll('#view > *')].map(e=> e.id || e.className || e.tagName).slice(0,9)
+      inputHidden: !!document.querySelector('#gTop .g-secbody[hidden]'),
+      inputAria: (document.querySelector('#gTop .g-sechead')||{getAttribute:()=>null}).getAttribute('aria-expanded'),
+      inputHead: (document.querySelector('#gTopHead')||{}).textContent || '',
+      sixVisible: (() => { const e = document.querySelector('#gSix'); return !!e && e.offsetParent !== null; })(),
+      order: [...document.querySelectorAll('#view > *')].map(e=> e.id || e.className || e.tagName)
     })""")
 
 
@@ -94,7 +100,7 @@ def main():
 
     with sync_playwright() as p:
         b = p.chromium.launch()
-        ctx = b.new_context(viewport={'width': 390, 'height': 844},
+        ctx = b.new_context(viewport={'width': 390, 'height': 844}, has_touch=True,
                             user_agent='Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1')
         pg = ctx.new_page()
         pg.on('console', lambda m: console_errors.append(m.text) if m.type == 'error' else None)
@@ -105,25 +111,79 @@ def main():
             pg.wait_for_selector('#gTop', timeout=8000)
             pg.wait_for_timeout(500)
 
-        # ------------------------------------------------------- 1) 구조
+        def open_input():
+            """매수 지표 입력 섹션 펼치기(아직 접혔을 때만). 새로 그린 뒤에도 열려 있으면 그대로."""
+            if pg.evaluate("() => !!document.querySelector('#gTop .g-secbody[hidden]')"):
+                pg.click('#gTop .g-sechead')
+                pg.wait_for_timeout(250)
+
+        # ------------------------------------------------------- 1) 구조 — 밸류게이지 먼저, 입력은 아래·접힘
         open_gauge('?a')
         st = gauge_state(pg)
         print('  order:', st['order'])
-        check('맨 위가 매수 지표 입력(지표 추적)', 'gTop' in st['order'][:2], st['order'])
+        check('칩·가격·기준 줄이 맨 위', 'gDuo' in st['order'][:5], st['order'][:5])
+        check('밸류게이지 카드가 첫 화면 맨 위(입력보다 위)',
+              'panel g-card' in st['order'][:6] and st['order'].index('gTop') > st['order'].index('panel g-card'), st['order'])
+        check('매수 지표 입력은 폭락 비교 뒤·지표 기록 앞',
+              st['order'].index('gTop') == len(st['order']) - 2, st['order'])
+        check('입력 섹션은 접힌 채로 시작', st['inputHidden'] is True and st['inputAria'] == 'false',
+              (st['inputHidden'], st['inputAria']))
+        check('접힌 머리 줄에 지금 점수·기준',
+              st['inputHead'].startswith('지금') and '점' in st['inputHead'] and '자동' in st['inputHead']
+              and ('확정' in st['inputHead'] or '실시간' in st['inputHead']), st['inputHead'])
+        check('접힌 동안 여섯 값 줄은 화면에 없다', st['sixVisible'] is False)
         check('값 직접 입력 삭제 — 가격 입력칸 없음', st['hasPx'] is False)
         check('값 직접 입력 삭제 — 이 값으로 계산 없음', st['hasCalc'] is False)
         check('가격 표시는 남는다', st['price'].startswith('$'), st['price'])
-        check('첫 화면에 전환·모드가 보인다', bool(st['basisOn']) and bool(st['modeOn']), (st['basisOn'], st['modeOn']))
-        check('첫 화면에 여섯 값 줄이 보인다', st['six'].count('·') == 5, st['six'])
-        first_fold = pg.evaluate("""() => {
-          const r = document.querySelector('#gTop').getBoundingClientRect();
-          const six = document.querySelector('#gSix').getBoundingClientRect();
-          return {top: Math.round(r.top), sixBottom: Math.round(six.bottom), vh: innerHeight};
+        fold = pg.evaluate("""() => {
+          const sc = document.querySelector('#gScore').getBoundingClientRect();
+          const rd = document.querySelector('#gRadar').getBoundingClientRect();
+          const tp = document.querySelector('#gTop').getBoundingClientRect();
+          return {scoreTop: Math.round(sc.top), scoreBottom: Math.round(sc.bottom),
+                  radarTop: Math.round(rd.top), radarBottom: Math.round(rd.bottom),
+                  inputTop: Math.round(tp.top), vh: innerHeight};
         }""")
-        check('390px 첫 화면 안에 입력 섹션·여섯 값 줄', first_fold['sixBottom'] <= first_fold['vh'], first_fold)
+        check('390px 첫 화면에 밸류게이지 점수', fold['scoreBottom'] <= fold['vh'], fold)
+        check('입력 섹션은 스크롤 아래(레이더보다 아래)',
+              fold['inputTop'] > fold['radarTop'] and fold['inputTop'] > fold['vh'], fold)
+        print('  첫 화면 위치:', fold)
         pg.screenshot(path=os.path.join(SHOTS, 'gauge-390-top.png'))
+        pg.evaluate("() => document.querySelector('#gTop').scrollIntoView({block:'center'})")
+        pg.wait_for_timeout(250)
+        pg.screenshot(path=os.path.join(SHOTS, 'gauge-390-input-collapsed.png'))
+
+        # 접기/펼치기 — 터치(tap)·키보드(Enter)·새로고침 유지
+        pg.evaluate("() => document.querySelector('#gTop').scrollIntoView({block:'center'})")
+        pg.tap('#gTop .g-sechead')
+        pg.wait_for_timeout(300)
+        op = gauge_state(pg)
+        check('터치(tap)로 펼쳐진다', op['inputHidden'] is False and op['inputAria'] == 'true',
+              (op['inputHidden'], op['inputAria']))
+        check('펼치면 여섯 값 줄이 보인다', op['sixVisible'] is True and op['six'].count('·') == 5, op['six'])
+        check('펼치면 자동/수동·확정/실시간 전환이 보인다', bool(op['basisOn']) and bool(op['modeOn']),
+              (op['basisOn'], op['modeOn']))
+        pg.screenshot(path=os.path.join(SHOTS, 'gauge-390-input-open.png'))
+
+        pg.focus('#gTop .g-sechead')
+        pg.keyboard.press('Enter')
+        pg.wait_for_timeout(250)
+        kb = gauge_state(pg)
+        check('키보드 Enter로 접힌다', kb['inputHidden'] is True and kb['inputAria'] == 'false',
+              (kb['inputHidden'], kb['inputAria']))
+        pg.focus('#gTop .g-sechead')
+        pg.keyboard.press('Enter')
+        pg.wait_for_timeout(250)
+        check('키보드 Enter로 다시 펼쳐진다', gauge_state(pg)['inputHidden'] is False)
+
+        pg.reload()
+        pg.wait_for_selector('#gTop')
+        pg.wait_for_timeout(700)
+        rl0 = gauge_state(pg)
+        check('새로고침해도 펼친 상태 유지(브라우저 저장)', rl0['inputHidden'] is False, rl0['inputHidden'])
+        check('새로고침해도 머리 줄 점수 유지', rl0['inputHead'] == op['inputHead'], (rl0['inputHead'], op['inputHead']))
 
         # ------------------------------------------------------- 2) 네 조합
+        open_input()
         combos = {}
         combos['auto-close'] = gauge_state(pg)
         check('자동×확정: 점수=live.json score', abs(float(combos['auto-close']['score']) - tq['score']) < 0.051,

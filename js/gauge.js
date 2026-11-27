@@ -1,7 +1,8 @@
 /* 매수 지표 탭 — 원본 앱 GaugeScreen(밸류게이지) 을 웹으로 옮긴 화면.
  *
- * 원본 구성(위에서 아래로): 대상 칩·가격 → 기준 줄 → 값 직접 입력(접힘) → 밸류게이지 카드 →
- * 지표 추적(접힘) → 문턱 통계 → 육각 레이더 → 최근 한 달 두 차트 → 전체 흐름 → 폭락 비교(접힘).
+ * 구성(위에서 아래로, 2026-11-28 무아 님 지시): 대상 칩·가격 → 기준 줄 → 밸류게이지 카드 →
+ * 문턱 통계 → 육각 레이더 → 최근 한 달 두 차트 → 전체 흐름 → 폭락 비교(접힘) →
+ * 매수 지표 입력·지표 추적(기본 접힘) → 지표 기록·버블·산식(접힘).
  *
  * 계산은 원본 core/Singularity.kt 와 같은 식이다(가중치·경계·클램프 그대로). 값이 없는 지표는
  * 빼고 남은 가중치 합으로 나눈다. 과거 통계·일봉·주별 이력은 data/gauge.json 에 미리 계산해 두었다.
@@ -29,6 +30,10 @@
   function liveView() { return document.getElementById('view'); }
 
   var ST = { target: 'ndx', mode: 'auto', manual: {}, open: {}, edited: false };
+  /* 저장된 상태(대상·모드·수동값·펼친 섹션)는 이 화면에 처음 들어올 때 한 번만 읽는다.
+     예전에는 ST.target 이 undefined 인지로 읽었는데 늘 'ndx' 라 한 번도 읽지 않았다(2026-11-28 고침) —
+     그래서 입력 섹션을 펼친 채 새로고침하면 다시 접혔다. */
+  var ST_LOADED = false;
   /* 화면 값 한 벌의 캐시 — 대상·기준(정규장/프리마켓)·모드(자동/수동)가 바뀌면 새로 만든다 */
   var CUR = { key: null, values: null };
   var crashScale = 'peak';
@@ -490,7 +495,7 @@
   /* ------------------------------------------------------------ 화면 */
 
   V.gauge = function (view, detailId) {
-    if (ST.target === undefined) loadState();
+    if (!ST_LOADED) { loadState(); ST_LOADED = true; }
     var G = Data.gauge;
     if (!G) { view.innerHTML = '<div class="loading">매수 지표 자료를 불러오는 중…</div>'; return; }
     if (detailId) { gaugeCaseView(view, detailId); return; }
@@ -597,10 +602,10 @@
         '<p class="note">점수는 그날까지의 자료만으로 계산했습니다(미래 자료가 섞이지 않게). 2002·2008은 이 사이트의 주별 이력(2011~) 밖이라 그래프가 아니라 위 글줄에만 적었습니다.</p>' +
       '</article>';
 
-    /* 8) 지표 기록·버블·산식 (접힘, 밸류게이지 카드 바로 아래) — 입력부는 위 topPanel 하나뿐 */
-    var track = trackingHtml(t, values, result, snap);
-    /* 9) 폭락 비교 (접힘) */
+    /* 8) 폭락 비교 (접힘) — 차트 묶음 바로 뒤 */
     var crashHtml = crashSectionHtml(detailId);
+    /* 9) 지표 기록·버블·산식 (접힘) — 입력부는 위 topPanel 하나뿐, 맨 아래 */
+    var track = trackingHtml(t, values, result, snap);
 
     var crashOpen = !!ST.open.crash || isCrashPath();
     view.innerHTML =
@@ -608,15 +613,15 @@
         '<h1>매수 지표</h1>' +
         '<p>여섯 지표를 0~100으로 환산해 가중 평균한 <b>밸류게이지</b>입니다. 높을수록 저평가·공포이고, ' + BUY + ' 이상이면 계획한 투입 구간입니다.</p>' +
       '</section>' +
-      topPanel +
       head +
       gaugeCard +
-      section('track', '지표 기록 · 버블 · 산식', '과거 점수 기록, 버블 체크, 무엇이 실시간인가, 매매 기준·산식. 눌러서 폅니다.', track) +
       statBlock +
       radarCard +
       chartsCard +
       flowCard +
-      section('crash', '폭락 비교', '저점 전후 1년 비교 · 여섯 사례. 눌러서 폅니다.', crashHtml, crashOpen);
+      section('crash', '폭락 비교', '저점 전후 1년 비교 · 여섯 사례. 눌러서 폅니다.', crashHtml, crashOpen) +
+      topPanel +
+      section('track', '지표 기록 · 버블 · 산식', '과거 점수 기록, 버블 체크, 무엇이 실시간인가, 매매 기준·산식. 눌러서 폅니다.', track);
 
     bind(view, t, detailId);
     drawCharts(view, t, monthPts, result.score);
@@ -751,24 +756,37 @@
       : '마지막 확정 종가') + '입니다. 기준을 바꾸면 여섯 값·가격·레이더가 그 기준으로 채워집니다.';
   }
 
-  /* 매수 지표 탭 맨 위 — 지표 추적(여섯 지표 조작)이 곧 입력부다.
+  /* 매수 지표 탭 아래(밸류게이지 뒤) — 지표 추적(여섯 지표 조작)이 곧 입력부다.
+     접힘이 기본이라 첫 화면에는 머리 한 줄(지금 점수·자동/수동·확정/실시간)만 보인다.
      가격을 따로 넣는 칸은 두지 않는다: 실시간 모드면 live.json 값, 손댔으면 낙폭·200일선 이격 역산값. */
+  function inputHeadText(snap, meta) {
+    var basisTxt = snap.manual ? '직접 입력값'
+      : (snap.basis === 'live'
+        ? '실시간' + (etPart(meta) ? ' ' + etPart(meta) : ' 값 없음')
+        : '확정 ' + F.day(snap.L.as_of) + ' 종가');
+    return '지금 ' + trim1(snap.result.score) + '점 · ' + (snap.manual ? '수동' : '자동') + ' · ' + basisTxt;
+  }
+
   function gaugeTopHtml(snap, T, G) {
     var t = snap.t, values = snap.values, result = snap.result;
     var meta = liveInfo(t);
-    var open = ST.open.inds === undefined ? (w.innerWidth || 390) >= 900 : !!ST.open.inds;
-    return '<article class="panel" id="gTop">' +
-      '<div class="row" style="justify-content:space-between;align-items:center;margin-bottom:4px">' +
-        '<div class="g-sub" style="margin:0">매수 지표 입력 · 지표 추적</div>' + modeSegHtml() +
+    var open = !!ST.open.input;   /* 기본 접힘 — 지시: 밸류게이지를 먼저 보이게 */
+    var indsOpen = ST.open.inds === undefined ? (w.innerWidth || 390) >= 900 : !!ST.open.inds;
+    return '<section class="panel g-sec g-input" id="gTop" data-sec="input">' +
+      '<button class="g-sechead" type="button" data-toggle="input" aria-expanded="' + (open ? 'true' : 'false') + '">' +
+        '<span class="t">매수 지표 입력 · 지표 추적<span class="mark">' + (open ? '접기 ▴' : '펼치기 ▾') + '</span></span>' +
+        '<span class="s" id="gTopHead">' + esc(inputHeadText(snap, meta)) + '</span>' +
+      '</button>' +
+      '<div class="g-secbody"' + (open ? '' : ' hidden') + '>' +
+        '<div class="g-ctl">' + modeSegHtml() + basisSegHtml(snap) + basisBadgeHtml(snap, meta) +
+          '<button class="btn ghost sm" type="button" id="gLiveRefresh">실시간 새로고침</button></div>' +
+        '<p class="g-cap" id="gModeNote">' + modeNote(snap) + '</p>' +
+        '<p class="g-six" id="gSix">' + sixLine(values) + '</p>' +
+        '<button class="btn ghost sm" type="button" id="gIndsBtn" aria-expanded="' + (indsOpen ? 'true' : 'false') + '" style="margin-top:2px">여섯 지표 직접 조작 <span class="mark">' + (indsOpen ? '접기 ▴' : '펼치기 ▾') + '</span></button>' +
+        '<div id="gInds"' + (indsOpen ? '' : ' hidden') + '>' + indsHtml(values) + indsTableHtml(result) + '</div>' +
+        '<p class="note">슬라이더·숫자로 값을 바꾸면 점수·막대·판정·레이더·오늘 선이 같은 값으로 바로 따라오고, 낙폭·200일선 이격은 위 가격을 거꾸로 다시 계산합니다. RSI·VIX는 과거 시계열이 필요해 가격으로 되돌릴 수 없습니다.</p>' +
       '</div>' +
-      '<div class="g-ctl">' + basisSegHtml(snap) + basisBadgeHtml(snap, meta) +
-        '<button class="btn ghost sm" type="button" id="gLiveRefresh">실시간 새로고침</button></div>' +
-      '<p class="g-cap" id="gModeNote">' + modeNote(snap) + '</p>' +
-      '<p class="g-six" id="gSix">' + sixLine(values) + '</p>' +
-      '<button class="btn ghost sm" type="button" id="gIndsBtn" aria-expanded="' + (open ? 'true' : 'false') + '" style="margin-top:2px">여섯 지표 직접 조작 <span class="mark">' + (open ? '접기 ▴' : '펼치기 ▾') + '</span></button>' +
-      '<div id="gInds"' + (open ? '' : ' hidden') + '>' + indsHtml(values) + indsTableHtml(result) + '</div>' +
-      '<p class="note">슬라이더·숫자로 값을 바꾸면 점수·막대·판정·레이더·오늘 선이 같은 값으로 바로 따라오고, 낙폭·200일선 이격은 위 가격을 거꾸로 다시 계산합니다. RSI·VIX는 과거 시계열이 필요해 가격으로 되돌릴 수 없습니다.</p>' +
-    '</article>';
+    '</section>';
   }
 
   function indsHtml(values) {
@@ -1730,6 +1748,7 @@
     var duo = el('#gDuo', view); if (duo) duo.innerHTML = duoHtml(snap, meta);
     var six = el('#gSix', view); if (six) six.innerHTML = sixLine(values);
     var mnote = el('#gModeNote', view); if (mnote) mnote.innerHTML = modeNote(snap);
+    var topHead = el('#gTopHead', view); if (topHead) topHead.textContent = inputHeadText(snap, meta);
 
     var scoreEl = el('#gScore', view); if (scoreEl) scoreEl.textContent = trim1(result.score);
     var badge = el('#gBadge', view);
