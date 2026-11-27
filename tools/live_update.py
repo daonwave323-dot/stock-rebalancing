@@ -621,6 +621,10 @@ def main(argv=None):
         if s not in symbols:
             symbols.append(s)
     if args.only:
+        # 점검용 — 이 모드로 실제 파일을 쓰면 일부 심볼만 담긴 파일로 덮어쓰게 된다. 막는다.
+        if not args.dry_run:
+            print("--only 는 --dry-run 과 함께만 쓸 수 있습니다(파일을 줄여 덮어쓰지 않도록).", file=sys.stderr)
+            return 2
         symbols = [s.strip().upper() for s in args.only.split(",") if s.strip()]
 
     fx = Fetcher()
@@ -766,7 +770,8 @@ def main(argv=None):
         tp = (((metas.get("TQQQ") or {}).get("currentTradingPeriod") or {}).get("regular") or {})
         if tp.get("start") and tp.get("end"):
             span = int(tp["end"]) - int(tp["start"])
-            if 0 < span < 6 * 3600:
+            same_day = datetime.fromtimestamp(int(tp["start"]), ET).date() == now_et.date()
+            if 0 < span < 6 * 3600 and same_day:
                 market["isHalfDay"] = True
                 market["regularEndEt"] = et_label(tp["end"])
     except Exception:

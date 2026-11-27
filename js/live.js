@@ -32,8 +32,10 @@
   }
   function money(v, cur) {
     if (v === null || v === undefined || isNaN(v)) return '—';
+    if (cur === '^') return Number(v).toLocaleString('en-US', { maximumFractionDigits: 2 }); /* 지수는 통화 없이 */
     var s = Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    if (cur === 'KRW') return '₩' + Number(v).toLocaleString('ko-KR') + '';
+    if (cur === 'KRW') return '₩' + Number(v).toLocaleString('ko-KR');
+    if (cur === 'NONE') return Number(v).toLocaleString('en-US', { maximumFractionDigits: 2 });
     return '$' + s;
   }
   function sessKo(s) {
@@ -117,7 +119,7 @@
       (s.marketCapText ? ' · 시총 ' + s.marketCapText : '')
     ) + '">' +
       '<b>' + esc(sym.replace('^', '')) + '</b>' +
-      '<span>' + esc(shown === null || shown === undefined ? '—' : money(shown, s.currency)) + '</span>' +
+      '<span>' + esc(shown === null || shown === undefined ? '—' : money(shown, sym.charAt(0) === '^' ? '^' : s.currency)) + '</span>' +
       '<i class="' + cls + '">' + esc(pct(chg)) + '</i>' +
       '<em>' + esc(sessKo(s.session)) + '</em>' +
       '</span>';
@@ -145,17 +147,26 @@
     var L = LIVE.data;
     var tq = L.symbols ? L.symbols['TQQQ'] : null;
     var parts = [];
-    if (tq && tq.sessionPrice !== null && tq.sessionPrice !== undefined) {
-      parts.push('프리마켓·애프터마켓 값은 정규장 종가와 다른 세션 체결가입니다(' +
-        sessKo(tq.session) + (tq.sessionTimeEt ? ' ' + etShort(tq.sessionTimeEt) : '') + ').');
+    if (tq && (tq.session === 'pre' || tq.session === 'post') && tq.sessionPrice !== null && tq.sessionPrice !== undefined) {
+      parts.push('지금 보이는 가격은 ' + sessKo(tq.session) + ' 체결가(' + etShort(tq.sessionTimeEt || '') +
+        ')이고, 점수는 마지막 정규장 종가(' + String(tq.scoreAsOf || '').replace(/-/g, '.') + ') 기준입니다.');
+    } else if (L.market && (L.market.session === 'regular')) {
+      parts.push('정규장 진행 중 — 가격은 지금 체결가, 점수는 마지막 확정 종가(' +
+        String(tq && tq.scoreAsOf || '').replace(/-/g, '.') + ') 기준입니다.');
     } else if (L.market && L.market.session === 'closed') {
-      parts.push('정규장 밖이라 새 체결이 없습니다 — 아래 값은 마지막 정규장 종가입니다.');
+      parts.push('정규장 밖이라 새 체결이 없습니다 — 보이는 값은 마지막 정규장 종가입니다.');
     }
-    parts.push('깃허브가 5분마다 돌리므로 실제로는 5~15분 늦을 수 있습니다. 매수·매도 판단의 근거로 쓰지 마세요.');
+    /* 지금 값을 마지막 봉으로 얹은 '추정' 점수 — 확정이 아니라고 분명히 적는다 */
+    var t = L.symbols && L.symbols['TQQQ'], x = L.symbols && L.symbols['SOXL'];
+    if (t && t.scoreLive !== null && t.scoreLive !== undefined && x && x.scoreLive !== null && x.scoreLive !== undefined) {
+      parts.push('실시간(추정) TQQQ ' + Number(t.scoreLive).toFixed(1) + ' · SOXL ' + Number(x.scoreLive).toFixed(1) +
+        ' — 지금 값을 진행 중인 봉으로 얹은 참고값입니다(확정 아님).');
+    }
+    parts.push('5분 주기지만 실제로는 5~15분 늦을 수 있습니다. 판단 근거로 쓰지 마세요.');
     var ageMin = null;
     if (L.updatedAt) {
-      var t = Date.parse(L.updatedAt);
-      if (!isNaN(t)) ageMin = Math.round((Date.now() - t) / 60000);
+      var ts = Date.parse(L.updatedAt);
+      if (!isNaN(ts)) ageMin = Math.round((Date.now() - ts) / 60000);
     }
     if (ageMin !== null && ageMin > 30) {
       parts.unshift('⚠ 이 파일이 ' + ageMin + '분째 그대로입니다 — 자동 갱신이 멈췄을 수 있습니다.');
