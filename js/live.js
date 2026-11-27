@@ -151,6 +151,26 @@
       if (!asOfLive || (s.scoreAsOf && s.scoreAsOf > asOfLive)) asOfLive = s.scoreAsOf;
     });
     if (asOfLive) D.scores.as_of = asOfLive;
+
+    /* 점수 이력 차트의 마지막 점도 새 기준일까지 이어 준다 —
+       카드가 93.2인데 차트 마지막이 98.6으로 끝나면 같은 화면에서 숫자가 어긋난다. */
+    try {
+      var hist = D.scores.history && D.scores.history.daily;
+      var n = D.scores.targets.ndx, x = D.scores.targets.sox;
+      if (hist && asOfLive && n && x && n.score !== undefined && x.score !== undefined) {
+        var lastD = hist.length ? hist[hist.length - 1][0] : '';
+        var lastW = D.scores.history.weekly && D.scores.history.weekly.length
+          ? D.scores.history.weekly[D.scores.history.weekly.length - 1][0] : '';
+        if (asOfLive > lastD) {
+          hist.push([asOfLive, n.score, x.score, n.dd === undefined ? null : n.dd,
+            x.dd === undefined ? null : x.dd]);
+        }
+        if (asOfLive > lastW && D.scores.history.weekly) {
+          D.scores.history.weekly.push([asOfLive, n.score, x.score]);
+        }
+      }
+    } catch (e) {}
+
     D.live = live;
   }
 
