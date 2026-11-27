@@ -75,6 +75,12 @@
 .g-seg{display:inline-flex;gap:3px;padding:3px;border-radius:12px;background:var(--sunken,#0d1428)}
 .g-seg button{border:0;background:none;color:var(--tx2);font:inherit;font-size:12.5px;font-weight:700;padding:8px 12px;border-radius:9px;cursor:pointer;min-height:38px}
 .g-seg button.on{background:var(--green);color:var(--bg)}
+/* 좁은 화면에서 보기 눈금 버튼이 글자 중간에서 꺾이지 않게 — 제목과 다른 줄로 내려 한 줄에 늘어놓는다 */
+.g-seg button{white-space:nowrap}
+@media (max-width:560px){
+  #ovScale{flex:1 1 100%;margin-top:8px;justify-content:space-between}
+  #ovScale button{flex:1 1 auto;padding:8px 6px;text-align:center}
+}
 .g-note-strong{font-size:12.5px;color:var(--tx2);margin:6px 0 0;line-height:1.55}
 .g-track{display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--line);font-size:12.5px}
 .g-track:last-child{border-bottom:0}
