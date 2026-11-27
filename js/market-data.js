@@ -94,7 +94,10 @@
   };
 
   M.liveSym = function (sym) {
-    return (M.live && M.live.symbols && M.live.symbols[sym]) || null;
+    if (!M.live || !M.live.symbols) return null;
+    var S2 = M.live.symbols;
+    return S2[sym] || S2[sym + '.KS'] || S2[sym + '.KQ'] ||
+      (String(sym).indexOf('.') > 0 ? S2[String(sym).split('.')[0]] : null) || null;
   };
 
   /* 스냅샷 + 실시간을 합친 한 종목. 실시간이 있으면 그 값을 우선한다. */
@@ -110,12 +113,13 @@
       exch: (s && (s.exch || s.board)) || '',
       sector: (s && s.sector) || '',
       industry: (s && s.industry) || '',
-      // 정규장 기준값: 스냅샷 가격은 모두 정규장 종가다.
-      regPrice: (s && s.price) != null ? s.price : (l ? (l.regularClose != null ? l.regularClose : l.last) : null),
-      regChg: (s && s.chg) != null ? s.chg : (l ? (l.changePct != null ? l.changePct : null) : null),
-      vol: (s && s.vol) != null ? s.vol : (l ? l.volume : null),
+      // 정규장 기준값 — 5분 갱신(live.json)이 있으면 그 값이 더 새 값이다.
+      regPrice: (l && l.regularClose != null) ? l.regularClose
+        : ((l && l.last != null) ? l.last : (s ? s.price : null)),
+      regChg: (l && l.changePct != null) ? l.changePct : (s ? s.chg : null),
+      vol: (l && l.volume != null) ? l.volume : (s ? s.vol : null),
       val: (s && s.val) != null ? s.val : null,
-      mcap: (s && s.mcap) != null ? s.mcap : (l ? l.marketCap : null),
+      mcap: (l && l.marketCap != null) ? l.marketCap : (s ? s.mcap : null),
       mcapAt: (s && s.mcap != null) ? (M.snap.generatedAt || '') : (l ? l.marketCapAsOf : null),
       mcapKrw: null,
       snapAt: M.snap ? M.snap.generatedAt : '',
