@@ -135,6 +135,8 @@
           eventList(list, mine, ds) + '</div>';
       }
     }
+    h += '<div class="pill-row" style="margin-top:10px"><a class="chip" href="#/market">증시</a>' +
+      '<a class="chip" href="#/tools">도구</a></div>';
     h += '<div class="note">' + esc(cal.data ? (cal.data.note || '') : '') +
       ' 일정은 ' + esc((cal.data && (cal.data.sources || []).join(' · ')) || '') + '.</div>';
     h += '</section>';

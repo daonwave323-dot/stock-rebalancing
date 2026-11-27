@@ -194,6 +194,8 @@
 
     h += '<div class="note">값의 출처 — ' + esc((Mkt.snap && (Mkt.snap.sources || []).join(' · ')) || '') +
       '. 모두 공개 시세를 웹이 직접 받은 참고 자료이며 투자 권유가 아닙니다.</div>';
+    h += '<div class="pill-row" style="margin-top:10px"><a class="chip" href="#/calendar">일정 보기</a>' +
+      '<a class="chip" href="#/tools">도구</a></div>';
     h += '</div>';
 
     view.innerHTML = h;
