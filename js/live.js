@@ -10,9 +10,9 @@
   'use strict';
 
   var REL = 'data/live.json';
-  /* 시세 파일은 'live' 브랜치에만 쌓인다 — main 에 5분마다 커밋하면 기록이 지저분해지고
-     깃허브 페이지 빌드도 계속 돈다. 브라우저는 그 브랜치의 파일을 그대로 읽는다(CORS 열림). */
-  var RAW = 'https://raw.githubusercontent.com/daonwave323-dot/stock-rebalancing/live/data/live.json';
+  /* 깃허브 페이지(Pages)는 커밋 뒤 빌드가 한 번 더 돌아 몇 분 늦다. 그래서 저장소 원본의
+     같은 파일을 먼저 본다(원본은 커밋 몇 초 뒤에 갱신된다). CORS 열려 있다. */
+  var RAW = 'https://raw.githubusercontent.com/daonwave323-dot/stock-rebalancing/main/data/live.json';
   var LS_WATCH = 'watch';
   var REFRESH_MS = 5 * 60 * 1000;
 

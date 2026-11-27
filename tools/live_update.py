@@ -793,7 +793,8 @@ def main(argv=None):
         "symbols": symbols_out,
     }
 
-    text = json.dumps(doc, ensure_ascii=False, indent=1) + "\n"
+    # 한 줄짜리로 쓴다(사람이 읽을 일은 없다). 5분마다 커밋되므로 크기를 줄여 두는 편이 낫다.
+    text = json.dumps(doc, ensure_ascii=False, separators=(",", ":")) + "\n"
     if args.dry_run:
         print(text)
         return 0
