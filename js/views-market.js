@@ -115,6 +115,32 @@
 
   function marketLabel(m) { return m === 'kr' ? '국내' : '미국'; }
 
+  /* ------------------------------------------------------------ 기준(정규장/프리마켓)
+     홈·매수 지표와 **같은 한 곳**(전역 Basis: 'close'|'live')을 쓴다.
+     예전 이 화면만 쓰던 market.basis 는 읽기만 하고, 처음 한 번 Basis 로 옮긴 뒤 지운다. */
+  var basisMoved = false;
+  function basisKey() {
+    if (w.Basis && Basis.get) return Basis.get() === 'live' ? 'after' : 'regular';
+    // Basis 가 없는 옛 캐시에서도 화면이 깨지지 않게
+    return S.get('market.basis', 'regular') === 'after' ? 'after' : 'regular';
+  }
+  function setBasis(k) {
+    var live = k === 'after' || k === 'live';
+    if (w.Basis && Basis.set) { Basis.set(live ? 'live' : 'close'); return; }
+    S.set('market.basis', live ? 'after' : 'regular');
+  }
+  function moveLegacyBasis() {
+    if (basisMoved) return;
+    basisMoved = true;
+    if (!w.Basis || !Basis.set) return;
+    var old = S.get('market.basis', null);
+    if (old === null) return;
+    var hasNew = false;
+    try { hasNew = w.localStorage.getItem('stockrebal.basis') !== null; } catch (e) {}
+    if (!hasNew) Basis.set(old === 'after' ? 'live' : 'close');
+    S.del('market.basis');   // 더 이상 쓰지 않는다(한 번 옮긴 뒤)
+  }
+
   /* ------------------------------------------------------------ 공통 머리 */
   function topBar(home) {
     var defs = st.market === 'kr'
@@ -128,10 +154,15 @@
     }
     h += '</div>';
     h += '<div class="mkt-tabs mini" style="margin-top:6px">';
-    h += '<button class="tab' + (st.basis === 'regular' ? ' on' : '') + '" data-basis="regular" type="button">정규장</button>';
-    h += '<button class="tab' + (st.basis === 'after' ? ' on' : '') + '" data-basis="after" type="button">프리마켓</button>';
+    h += '<button class="tab' + (st.basis === 'regular' ? ' on' : '') + '" data-basis="close" type="button" aria-pressed="' +
+      (st.basis === 'regular') + '">정규장</button>';
+    h += '<button class="tab' + (st.basis === 'after' ? ' on' : '') + '" data-basis="live" type="button" aria-pressed="' +
+      (st.basis === 'after') + '">프리마켓</button>';
     h += '<span class="src" style="margin-left:auto">' + esc(Mkt.liveText()) + '</span>';
     h += '</div>';
+    h += '<div class="basis-line">보는 값 — ' + (st.basis === 'after'
+      ? '프리마켓(실시간 추정) · 홈·매수 지표와 같은 기준'
+      : '정규장(확정 종가) · 홈·매수 지표와 같은 기준') + '</div>';
     h += '<div class="defs">' + esc(defs) + '</div>';
     h += '</div>';
     return h;
@@ -169,6 +200,7 @@
           '<div class="n">' + esc(x.name) + (x.proxy ? ' <span class="src">' + esc(x.proxy) + '</span>' : '') + '</div>' +
           '<div class="p">' + px(x.price, market === 'kr' ? 'KRW' : 'USD') + '</div>' +
           '<div class="c">' + chg(x.chg, market) + '</div>' +
+          '<canvas class="spark" data-spark="' + esc(x.sym) + '" aria-hidden="true"></canvas>' +
           '<div class="f">' + esc(x.note || '') + (x.at ? ' · ' + Mkt.time(x.at) : '') + '</div>' +
           '</button>';
       });
@@ -195,20 +227,21 @@
         var lk = Mkt.look(it.sym, basis);
         return { it: it, q: q, lk: lk };
       });
-      h += '<div class="tbl-wrap" style="margin-top:8px"><table class="mkt"><thead><tr>' +
-        '<th class="nm">종목</th><th>가격</th><th>등락</th><th>시가총액</th><th>거래량</th>' +
-        '<th class="hcell" scope="col"><span class="sr">관심</span></th></tr></thead><tbody>';
+      h += '<div class="tbl-wrap" style="margin-top:8px"><table class="mkt fixed"><thead><tr>' +
+        '<th class="nm c-name">종목</th><th class="c-price">가격</th><th class="c-chg">등락</th>' +
+        '<th class="c-cap">시가총액</th><th class="c-vol">거래량</th>' +
+        '<th class="hcell act c-heart" scope="col">관심</th></tr></thead><tbody>';
       wrows.forEach(function (r, i) {
         var sym = r.it.sym, cur = r.q ? r.q.cur : (market === 'kr' ? 'KRW' : 'USD');
         var price = r.lk ? r.lk.price : null;
         var c = r.lk ? r.lk.chg : null;
         h += '<tr class="row" data-stock="' + esc(sym) + '">' +
-          '<td class="nm"><span class="sym">' + esc(sym) + '</span><span class="desc">' + esc((r.q && (r.q.name || r.q.desc)) || r.it.name || '') + '</span></td>' +
-          '<td>' + px(price, cur) + '</td>' +
-          '<td>' + chg(c, market) + '</td>' +
-          '<td>' + (r.q ? Mkt.cap(r.q.mcap, cur, Mkt.fx()) : '—') + '</td>' +
-          '<td class="vol">' + (r.lk ? Mkt.vol(r.lk.vol) : '—') + '</td>' +
-          '<td class="hcell act" style="white-space:nowrap">' +
+          '<td class="nm c-name"><span class="sym">' + esc(sym) + '</span><span class="desc">' + esc((r.q && (r.q.name || r.q.desc)) || r.it.name || '') + '</span></td>' +
+          '<td class="c-price">' + px(price, cur) + '</td>' +
+          '<td class="c-chg">' + chg(c, market) + '</td>' +
+          '<td class="c-cap">' + (r.q ? Mkt.capShort(r.q.mcap, cur) : '—') + '</td>' +
+          '<td class="vol c-vol">' + (r.lk ? Mkt.vol(r.lk.vol) : '—') + '</td>' +
+          '<td class="hcell act c-heart" style="white-space:nowrap">' +
             '<button class="x" type="button" data-up="' + esc(sym) + '" title="위로" aria-label="' + esc(sym) + ' 위로">▲</button>' +
             '<button class="x" type="button" data-down="' + esc(sym) + '" title="아래로" aria-label="' + esc(sym) + ' 아래로">▼</button>' +
             heartBtn(sym, (r.q && r.q.name) || r.it.name || sym) +
@@ -227,10 +260,11 @@
     /* ③ 마켓맵 */
     h += '<section class="panel"><div class="card-h"><h2>마켓맵</h2><span class="right">' +
       '<span class="daytag">' + (basis === 'after' ? '프리마켓' : '정규장') + '</span></span></div>';
-    h += '<div class="mkt-tabs mini">';
+    h += '<div class="seg-row" role="group" aria-label="마켓맵 보기" style="margin-top:8px">';
     [['all', '전체'], ['QQQ', 'QQQ'], ['SPY', 'SPY'], ['DIA', 'DIA'], ['SOX', '반도체'], ['SECTOR', '섹터·업종']].forEach(function (o) {
       if (market === 'kr' && o[0] !== 'all' && o[0] !== 'SECTOR') return;
-      h += '<button class="tab' + (st.mapScope === o[0] ? ' on' : '') + '" data-scope="' + o[0] + '" type="button">' + o[1] + '</button>';
+      h += '<button class="seg' + (st.mapScope === o[0] ? ' on' : '') + '" data-scope="' + o[0] + '" type="button" aria-pressed="' +
+        (st.mapScope === o[0]) + '">' + o[1] + '</button>';
     });
     h += '</div>';
 
@@ -262,13 +296,14 @@
 
     /* ④ 순위 */
     var ranks = rankRows(rows, market);
-    h += '<section class="panel"><div class="card-h"><h2>순위</h2><span class="right">';
+    h += '<section class="panel"><div class="card-h"><h2>순위</h2><span class="right">' +
+      '<span class="seg-row" role="group" aria-label="순위 기준">';
     ['value', 'gain', 'loss', 'cap'].forEach(function (k) {
-      h += '<button class="daytag" style="cursor:pointer' + (st.sort === k ? ';color:var(--tx);border-color:var(--line2)' : '') +
-        '" data-sort="' + k + '" type="button">' + SORTS[k] + '</button>';
+      h += '<button class="seg' + (st.sort === k ? ' on' : '') + '" data-sort="' + k + '" type="button" aria-pressed="' +
+        (st.sort === k) + '">' + SORTS[k] + '</button>';
     });
-    h += '</span></div>' + table(ranks, market) +
-      '<div class="note">' + SORTS[st.sort] + ' 순 상위 30종목. 행을 누르면 종목 상세가 열립니다.</div></section>';
+    h += '</span></span></div>' + table(ranks, market, true) +
+      '<div class="note">' + SORTS[st.sort] + ' 순 상위 30종목. 왼쪽 숫자가 등수이고, 행을 누르면 종목 상세가 열립니다.</div></section>';
 
     h += '<div class="note">값의 출처 — ' + esc((Mkt.snap && (Mkt.snap.sources || []).join(' · ')) || '') +
       '. 모두 공개 시세를 웹이 직접 받은 참고 자료이며 투자 권유가 아닙니다.</div>';
@@ -302,7 +337,106 @@
       };
       if (box) Treemap.draw(box, cells, pick);
     }
+    requestAnimationFrame(function () { if (document.body.contains(view)) drawSparks(view, market, basis); });
     startPoll(view);
+  }
+
+  /* ------------------------------------------------------------ 지수 미니 차트
+     data/candles.json 의 최근 22봉 종가(약 한 달)를 한 줄로 그린다. 봉 자료는 이 파일 하나를
+     한 번만 받아 캐시한다(Mkt.loadCandles · Candles.loadFor). 봉이 없으면 선 없이 숫자만 남긴다.
+     색은 그 화면의 등락 색 규칙(국내 상승 빨강·하락 파랑 / 미국 상승 초록·하락 빨강)을 그대로 쓴다. */
+  var SPARK_N = 22;
+
+  function toneColor(tone) {
+    var el = document.createElement('span');
+    el.className = tone || 'flat';
+    el.style.cssText = 'position:absolute;left:-9999px;top:0';
+    document.body.appendChild(el);
+    var c = getComputedStyle(el).color;
+    document.body.removeChild(el);
+    return c;
+  }
+
+  function drawSparks(view, market, basis) {
+    var list = view.querySelectorAll('canvas.spark');
+    if (!list.length || !w.Candles || !Candles.loadFor) return;
+    list.forEach(function (cv) {
+      var sym = cv.getAttribute('data-spark');
+      Candles.loadFor(sym).then(function (bars) {
+        if (!document.body.contains(cv)) return;
+        paintSpark(cv, sym, bars || [], market, basis);
+      }).catch(function () { /* 숫자는 그대로 둔다 */ });
+    });
+  }
+
+  /* 선 색 — 바로 위에 적힌 등락 숫자와 **같은 색**을 쓴다(셀의 등락 칸에서 읽는다).
+     숫자는 올랐는데 선만 빨강이면 읽기 헷갈리기 때문. */
+  function lineColor(cv, market, closes) {
+    var cell = cv.parentNode;
+    var cEl = cell ? cell.querySelector('.c span') : null;
+    if (cEl) {
+      var c = getComputedStyle(cEl).color;
+      if (c) return c;
+    }
+    return toneColor(Mkt.tone(closes[closes.length - 1] - closes[0], market));
+  }
+
+  function paintSpark(cv, sym, bars, market, basis) {
+    var closes = [];
+    (bars || []).slice(-SPARK_N).forEach(function (b) {
+      var v = b && b[4] != null ? Number(b[4]) : null;
+      if (v != null && !isNaN(v)) closes.push(v);
+    });
+    var lk = Mkt.look(sym, basis);
+    var liveDot = false;
+    if (basis === 'after' && lk && lk.price != null && (lk.session === 'pre' || lk.session === 'post')) {
+      closes.push(Number(lk.price));      // 프리마켓이면 마지막 점을 실시간 값으로 잇는다
+      liveDot = true;
+    }
+    var W = cv.clientWidth || (cv.parentNode && cv.parentNode.clientWidth) || 140, H = 34;
+    var dpr = Math.min(2, w.devicePixelRatio || 1);
+    cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+    cv.style.height = H + 'px';
+    var ctx = cv.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+    if (closes.length < 2 || W < 20) {   // 봉이 없으면 선 없이 숫자만 — 빈 칸도 남기지 않는다
+      cv.style.display = 'none';
+      return;
+    }
+    cv.style.display = 'block';
+
+    var lo = Math.min.apply(null, closes), hi = Math.max.apply(null, closes);
+    if (hi <= lo) hi = lo + 1;
+    var padT = 3, padB = 4, gh = H - padT - padB;
+    var xf = function (i) { return (i / (closes.length - 1)) * (W - 3) + 1.5; };
+    var yf = function (v) { return padT + (hi - v) / (hi - lo) * gh; };
+
+    // 기준선 — 기간 첫 종가(얇은 점선)
+    ctx.strokeStyle = 'rgba(255,255,255,.20)';
+    ctx.lineWidth = 0.8;
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath(); ctx.moveTo(0, yf(closes[0])); ctx.lineTo(W, yf(closes[0])); ctx.stroke();
+    ctx.setLineDash([]);
+
+    var col = lineColor(cv, market, closes);
+    ctx.strokeStyle = col; ctx.lineWidth = 1.5; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    ctx.beginPath();
+    closes.forEach(function (v, i) {
+      var px2 = xf(i), py = yf(v);
+      if (i === 0) ctx.moveTo(px2, py); else ctx.lineTo(px2, py);
+    });
+    ctx.stroke();
+
+    if (liveDot) {
+      ctx.fillStyle = col;
+      ctx.beginPath(); ctx.arc(xf(closes.length - 1), yf(closes[closes.length - 1]), 2.3, 0, Math.PI * 2); ctx.fill();
+      var cell = cv.parentNode, f = cell ? cell.querySelector('.f') : null;
+      if (f && f.textContent.indexOf('● 실시간') < 0) {
+        f.textContent = '● 실시간 · ' + f.textContent;   // 선의 마지막 점은 실시간 값
+        f.setAttribute('title', '선의 마지막 점은 실시간(장외) 값입니다');
+      }
+    }
   }
 
   function mapCells(market, basis, scope) {
@@ -346,18 +480,20 @@
     return list.slice(0, 30);
   }
 
-  function table(rows, market) {
-    var h = '<div class="tbl-wrap"><table class="mkt"><thead><tr>' +
-      '<th class="nm">종목</th><th>가격</th><th>등락</th><th>거래대금</th><th>시가총액</th>' +
-      '<th class="hcell" scope="col"><span class="sr">관심</span></th></tr></thead><tbody>';
-    rows.forEach(function (r) {
+  function table(rows, market, numbered) {
+    var h = '<div class="tbl-wrap"><table class="mkt fixed"><thead><tr>' +
+      '<th class="nm c-name">종목</th><th class="c-price">가격</th><th class="c-chg">등락</th>' +
+      '<th class="c-val">거래대금</th><th class="c-cap">시가총액</th>' +
+      '<th class="hcell c-heart" scope="col">관심</th></tr></thead><tbody>';
+    rows.forEach(function (r, i) {
       h += '<tr class="row" data-stock="' + esc(r.sym) + '">' +
-        '<td class="nm"><span class="sym">' + esc(r.sym) + '</span><span class="desc">' + esc(r.name || r.desc || '') + '</span></td>' +
-        '<td>' + px(r.price, r.cur) + '</td>' +
-        '<td>' + chg(r.chg, market) + '</td>' +
-        '<td class="vol">' + Mkt.money(r.val, r.cur) + '</td>' +
-        '<td>' + Mkt.cap(r.mcap, r.cur, Mkt.fx()) + '</td>' +
-        '<td class="hcell">' + heartBtn(r.sym, r.name || r.desc || r.sym) + '</td></tr>';
+        '<td class="nm c-name">' + (numbered ? '<span class="rk" aria-label="' + (i + 1) + '등">' + (i + 1) + '</span>' : '') +
+          '<span class="sym">' + esc(r.sym) + '</span><span class="desc">' + esc(r.name || r.desc || '') + '</span></td>' +
+        '<td class="c-price">' + px(r.price, r.cur) + '</td>' +
+        '<td class="c-chg">' + chg(r.chg, market) + '</td>' +
+        '<td class="vol c-val">' + Mkt.money(r.val, r.cur) + '</td>' +
+        '<td class="c-cap">' + Mkt.capShort(r.mcap, r.cur) + '</td>' +
+        '<td class="hcell c-heart">' + heartBtn(r.sym, r.name || r.desc || r.sym) + '</td></tr>';
     });
     h += '</tbody></table></div>';
     return h;
@@ -377,10 +513,11 @@
     });
     view.querySelectorAll('[data-basis]').forEach(function (b) {
       b.addEventListener('click', function () {
-        var k = b.getAttribute('data-basis');
-        if (k === st.basis) return;
-        st.basis = k;
-        S.set('market.basis', k);
+        var k = b.getAttribute('data-basis');            // close | live — 홈·매수 지표와 같은 값
+        var want = k === 'live' ? 'after' : 'regular';
+        if (want === st.basis) return;
+        st.basis = want;
+        setBasis(k);
         refresh(view);
       });
     });
@@ -393,6 +530,7 @@
     view.querySelectorAll('[data-sort]').forEach(function (b) {
       b.addEventListener('click', function () {
         st.sort = b.getAttribute('data-sort');
+        S.set('market.sort', st.sort);   // market.tab·market.basis 와 같은 S 저장 방식
         home(view);
       });
     });
@@ -816,8 +954,11 @@
     // parts: ['market'] / ['market','candles','SYM'] / ['market','sector','X'] / ['market','industry','S','I'] / ['market','stock','SYM']
     st.market = S.get('market.tab', st.market) || 'us';
     if (st.market !== 'kr' && st.market !== 'us') st.market = 'us';
-    st.basis = S.get('market.basis', st.basis) || 'regular';
-    if (st.basis !== 'regular' && st.basis !== 'after') st.basis = 'regular';
+    moveLegacyBasis();
+    st.basis = basisKey();
+    if (st.sort !== 'value' && st.sort !== 'gain' && st.sort !== 'loss' && st.sort !== 'cap') st.sort = 'cap';
+    st.sort = S.get('market.sort', st.sort) || st.sort;
+    if (st.sort !== 'value' && st.sort !== 'gain' && st.sort !== 'loss' && st.sort !== 'cap') st.sort = 'cap';
 
     if (parts.length === 1) return home(view);
     var kind = parts[1];

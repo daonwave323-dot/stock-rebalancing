@@ -418,6 +418,13 @@
     return head;
   };
 
+  /* 표 칸용 짧은 시가총액 — 원화 병기(약 N조원)를 빼 열 폭 안에 들어오게 한다.
+     전체 값(병기 포함)은 종목 상세가 M.cap 으로 보여 준다. */
+  M.capShort = function (v, cur) {
+    if (v == null || isNaN(v) || v <= 0) return '—';
+    return M.cap(v, cur === 'KRW' ? 'KRW' : 'USD');
+  };
+
   M.vol = function (v) {
     if (v == null || isNaN(v)) return '—';
     var n = Number(v);

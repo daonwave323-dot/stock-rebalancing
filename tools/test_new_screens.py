@@ -106,7 +106,7 @@ def main():
         # 정렬(시총)
         pg.locator('[data-sort="cap"]').first.click()
         pg.wait_for_timeout(700)
-        check('순위 시총 정렬', pg.locator('[data-sort="cap"]').first.get_attribute('style') is not None)
+        check('순위 시총 정렬', 'on' in (pg.locator('[data-sort="cap"]').first.get_attribute('class') or ''))
 
         # 시가총액 단위
         caps = pg.inner_text('table.mkt')
@@ -139,10 +139,10 @@ def main():
 
         # ---------------------------------------------------------- 프리마켓 토글
         go('#/market', 1200)
-        pg.locator('[data-basis="after"]').click()
+        pg.locator('[data-basis="live"]').click()
         pg.wait_for_timeout(900)
         check('프리마켓 토글 적용', '프리마켓' in pg.inner_text('.mkt-top'))
-        pg.locator('[data-basis="regular"]').click()
+        pg.locator('[data-basis="close"]').click()
         pg.wait_for_timeout(700)
 
         # ---------------------------------------------------------- 일정
