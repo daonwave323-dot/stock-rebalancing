@@ -1,0 +1,52 @@
+# 이 파일은 워크플로 '사본'입니다.
+# 깃허브 앱 권한 때문에 .github/workflows/live-update.yml 을 자동으로 올리지 못했습니다.
+# 깃허브 웹에서 .github/workflows/live-update.yml 을 새 파일로 만들고 이 내용을 그대로 붙여 넣으면
+# 5분마다 자동 갱신이 시작됩니다(파일 맨 위 이 주석 3줄은 지워도 됩니다).
+name: live-update
+
+# 5분마다 야후 시세를 받아 data/live.json 으로 커밋한다.
+# 브라우저는 이 정적 JSON 만 읽으므로 어떤 키도 화면에 전달되지 않는다(키 자체를 쓰지 않는다).
+# 공개 저장소라 GitHub Actions 사용 시간은 무료다.
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: live-update
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: 저장소 받기
+        uses: actions/checkout@v4
+
+      - name: 파이썬 준비
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 시세 받아 data/live.json 쓰기
+        run: python3 tools/live_update.py
+
+      - name: 바뀐 파일만 커밋·푸시
+        run: |
+          set -e
+          if git diff --quiet -- data/live.json; then
+            echo "변경 없음 — 커밋하지 않습니다."
+            exit 0
+          fi
+          git config user.name "live-update-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/live.json
+          git commit -m "시세 자동 갱신 $(date -u +'%Y-%m-%d %H:%MZ')"
+          # 다른 작업이 먼저 올렸을 수 있으니 rebase 후 푸시한다.
+          git pull --rebase --autostash origin main
+          git push origin HEAD:main

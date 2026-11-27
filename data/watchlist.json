@@ -1,0 +1,13 @@
+{
+ "note": "5분 시세 갱신기가 미리 받아 두는 티커 목록. 여기에 없던 티커를 화면에서 쓰려면 이 줄에 티커를 더하면 다음 갱신(5분)부터 data/live.json 에 들어옵니다. 브라우저가 직접 받는 폴백은 사이트 간 요청 차단(CORS)으로 대개 실패합니다.",
+ "updated": "2026-11-27",
+ "symbols": [
+  "NVDA", "AMD", "MU", "TSM", "AVGO", "INTC", "ASML", "AMAT", "LRCX", "KLAC",
+  "ARM", "SMCI", "MRVL", "QCOM", "TSLA", "AAPL", "MSFT", "GOOGL", "AMZN", "META",
+  "NFLX", "ORCL", "CRM", "ADBE", "PLTR", "COIN", "MSTR", "HOOD", "IONQ", "RKLB",
+  "ASTS", "SOFI", "ACHR", "UBER", "DIS", "BA", "JPM", "XOM", "LLY", "UNH",
+  "SPY", "QQQ", "VOO", "VTI", "IWM", "DIA", "QLD", "SQQQ", "SOXS", "TECL",
+  "SPXL", "UPRO", "TMF", "TLT", "SMH", "ARKK", "GLD", "SLV", "USO", "VXX",
+  "005930.KS", "000660.KS"
+ ]
+}
