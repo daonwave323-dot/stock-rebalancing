@@ -28,7 +28,7 @@
   /* 라우터가 화면을 다시 그리면 #view 노드가 바뀐다 — 콜백 안에서는 잡아 둔 노드 대신 이걸 쓴다 */
   function liveView() { return document.getElementById('view'); }
 
-  var ST = { target: 'ndx', mode: 'auto', manual: {}, open: {} };
+  var ST = { target: 'ndx', mode: 'auto', manual: {}, open: {}, edited: false };
   var LIVE = {};
   var crashScale = 'peak';
 
@@ -275,6 +275,9 @@
     var L = latest(t);
     var values = liveValues(t);
     var result = scoreOf(values, t);
+    /* 자동·무편집이면 자료의 점수를 그대로 쓴다(반올림 경계에서 홈과 0.1 어긋나지 않게) */
+    var shown = (ST.mode === 'auto' && !ST.edited && L.score !== undefined && L.score !== null) ? L.score : result.score;
+    result = { raw: result.raw, score: shown, rows: result.rows, weightSum: result.weightSum, sum: result.sum };
     var v = verdictOf(result.score);
     var axes = axesOf(values, t);
     var D = L.detail, S_ = T.stat;
@@ -380,7 +383,8 @@
         '<div class="chart-box" id="gFlow"></div>' +
         '<p class="note">' + (G.events[t] || []).map(function (e) {
           var label = { dotcom: '닷컴', lehman: '리먼', covid: '코로나', tariff: '관세', today: '오늘' }[e.id] || e.id;
-          return label + ' ' + e.date.slice(0, 4) + ' ' + trim1(e.score);
+          var sc = e.id === 'today' ? result.score : e.score;
+          return label + ' ' + (e.id === 'today' ? F.day(L.as_of) : e.date.slice(0, 4)) + ' ' + trim1(sc);
         }).join(' · ') + '</p>' +
         '<p class="note">점수는 그날까지의 자료만으로 계산했습니다(미래 자료가 섞이지 않게). 2002·2008은 이 사이트의 주별 이력(2011~) 밖이라 그래프가 아니라 위 글줄에만 적었습니다.</p>' +
       '</article>';
@@ -1031,6 +1035,9 @@
   function updateLive(view, t) {
     var values = liveValues(t);
     var result = scoreOf(values, t);
+    /* 자동·무편집이면 자료의 점수를 그대로 쓴다(반올림 경계에서 홈과 0.1 어긋나지 않게) */
+    var shown = (ST.mode === 'auto' && !ST.edited && L.score !== undefined && L.score !== null) ? L.score : result.score;
+    result = { raw: result.raw, score: shown, rows: result.rows, weightSum: result.weightSum, sum: result.sum };
     var v = verdictOf(result.score);
     var axes = axesOf(values, t);
 
@@ -1108,6 +1115,7 @@
     els(view, '[data-target]').forEach(function (b) {
       b.addEventListener('click', function () {
         ST.target = b.getAttribute('data-target');
+        ST.edited = false;
         saveState();
         V.gauge(liveView(), null);
       });
@@ -1124,6 +1132,7 @@
           IND.forEach(function (s) { ST.manual[ST.target][s.key] = cur[s.key]; });
         }
         ST.mode = mode;
+        ST.edited = false;
         LIVE = {};
         saveState();
         recordNow(ST.target);
@@ -1137,6 +1146,7 @@
         var key = sl.getAttribute('data-slider');
         var v = Number(sl.value);
         liveValues(ST.target)[key] = v;
+        ST.edited = true;
         var num = el('[data-num="' + key + '"]', view);
         if (num && document.activeElement !== num) num.value = key === 'vixr' ? v.toFixed(2) : v.toFixed(1);
         updateLive(view, ST.target);
@@ -1148,6 +1158,7 @@
         var v = numOrNull(inp.value);
         if (v === null) return;
         liveValues(ST.target)[key] = v;
+        ST.edited = true;
         var sl = el('[data-slider="' + key + '"]', view);
         if (sl) sl.value = String(v);
         updateLive(view, ST.target);
@@ -1168,6 +1179,7 @@
       err.textContent = '';
       ST.mode = 'manual';
       ST.manual[ST.target] = vals;
+      ST.edited = true;
       LIVE = {};
       saveState();
       V.gauge(liveView(), null);
