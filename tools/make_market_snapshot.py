@@ -371,6 +371,8 @@ def main():
     for code, n in sorted(nav.items(), key=lambda kv: -(kv[1]["mcap"] or 0)):
         if code in have or n["price"] is None:
             continue
+        if is_preferred(n["name"], code, "korea"):
+            continue
         extra.append({
             "sym": code, "name": n["name"], "desc": "", "exch": n["board"],
             "market": "kr", "cur": "KRW", "price": n["price"], "chg": n["chg"],
