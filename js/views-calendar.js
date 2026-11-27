@@ -164,7 +164,7 @@
         (ds === today() ? ' today' : '') + (ds === (cal.day || today()) ? ' on' : '') +
         '" data-day="' + ds + '"><b>' + d.getDate() + '</b>';
       show.slice(0, 2).forEach(function (e) {
-        h += '<span class="e">· ' + esc(e.title.slice(0, 8)) + '</span>';
+        h += '<span class="e">· ' + esc(e.title.length > 14 ? e.title.slice(0, 13) + '…' : e.title) + '</span>';
       });
       if (show.length > 2) h += '<span class="e src">+' + (show.length - 2) + '</span>';
       h += '</div>';
