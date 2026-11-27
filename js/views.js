@@ -283,7 +283,7 @@
         '<p class="note" style="margin-bottom:10px">점수·폭락 사례·판단 채점을 한 통으로. 1차 판은 신청 폼만 있고 실제 발송은 준비 중입니다.</p>' +
         '<form id="subForm" class="row" novalidate>' +
           '<input type="email" id="subMail" placeholder="메일 주소" aria-label="메일 주소" ' +
-            'style="flex:1;min-width:200px;background:#0d1428;border:1px solid var(--line2);border-radius:9px;color:var(--tx);padding:9px 11px;font:inherit">' +
+            'style="flex:1;min-width:200px;background:var(--sunken);border:1px solid var(--line2);border-radius:9px;color:var(--tx);padding:9px 11px;font:inherit">' +
           '<button class="btn primary" type="submit">구독 신청</button>' +
         '</form>' +
         '<p class="note">신청 내용은 이 브라우저에만 남습니다(서버로 보내지 않습니다).</p>' +
@@ -319,9 +319,9 @@
   /* 아침 메일 미리보기 — 오늘 화면의 네 칸을 메일 모양으로 */
   function mailPreviewHtml(pf, now, closest, ver) {
     var t = Data.scores.targets;
-    var lines = '<p style="margin:0 0 4px;color:#8b9ab8;font-size:12px">스톡 리밸런싱 · Stock Rebalancing · ' + F.day(F.today()) + ' 아침</p>';
-    var out = '<div style="border:1px solid var(--line2);border-radius:12px;overflow:hidden;background:#0d1428">' +
-      '<div style="padding:14px 16px;background:#111c36;border-bottom:1px solid var(--line)">' + lines +
+    var lines = '<p style="margin:0 0 4px;color:#9aa5b6;font-size:12px">스톡 리밸런싱 · Stock Rebalancing · ' + F.day(F.today()) + ' 아침</p>';
+    var out = '<div style="border:1px solid var(--line2);border-radius:12px;overflow:hidden;background:var(--sunken)">' +
+      '<div style="padding:14px 16px;background:#2b3342;border-bottom:1px solid var(--line)">' + lines +
         '<b style="font-size:15px">오늘의 네 칸</b></div><div style="padding:14px 16px">';
     out += '<p style="margin:0 0 6px"><b>① 두 점수</b> — TQQQ ' + F.num(t.ndx.score) + ' (' + esc(t.ndx.verdict.label) + ') · SOXL ' +
       F.num(t.sox.score) + ' (' + esc(t.sox.verdict.label) + ')</p>';
@@ -337,7 +337,7 @@
         return F.day(v.r.date) + ' ' + esc(v.r.call) + ' ' + (v.ret === null ? '대기' : GRADE_TEXT[v.grade]);
       }).join(' · ') : '없음') + '</p>';
     out += '<p style="margin:0 0 0"><b>④ 오늘 할 일</b> — ' + (pf ? (pf.out ? pf.out + '종목 밴드 이탈, 표에서 수량 확인' : '오늘은 없음') : '보유를 먼저 넣어 주세요') + '</p>';
-    out += '</div><div style="padding:10px 16px;border-top:1px solid var(--line);color:#8b9ab8;font-size:11px">' +
+    out += '</div><div style="padding:10px 16px;border-top:1px solid var(--line);color:#9aa5b6;font-size:11px">' +
       '정보 제공·복기 목적. 매수·매도 추천이 아닙니다. 기준일 ' + F.day(Data.asOf()) + ' 종가 · 글 Verdictjang</div></div>';
     return out;
   }
@@ -366,70 +366,70 @@
     var KR = '"Apple SD Gothic Neo","Malgun Gothic","Noto Sans KR",sans-serif';
 
     var g = c.createLinearGradient(0, 0, W, H);
-    g.addColorStop(0, '#111c36'); g.addColorStop(0.55, '#0b1020'); g.addColorStop(1, '#0d1b2e');
+    g.addColorStop(0, '#2b3342'); g.addColorStop(0.55, '#1b202a'); g.addColorStop(1, '#212a37');
     c.fillStyle = g; c.fillRect(0, 0, W, H);
 
-    c.strokeStyle = '#22304d'; c.lineWidth = 2;
+    c.strokeStyle = '#3a4351'; c.lineWidth = 2;
     c.strokeRect(28, 28, W - 56, H - 56);
 
-    c.fillStyle = '#e9eefc';
+    c.fillStyle = '#e8ecf4';
     c.font = '700 40px ' + KR;
     c.fillText('스톡 리밸런싱', 72, 108);
-    c.fillStyle = '#7c8aa8';
+    c.fillStyle = '#949fb1';
     c.font = '600 20px ' + KR;
     c.fillText('STOCK REBALANCING', 74, 140);
 
     c.textAlign = 'right';
-    c.fillStyle = '#a8b6d0';
+    c.fillStyle = '#b3bdcb';
     c.font = '500 20px ' + KR;
     c.fillText(F.day(F.today()), W - 76, 108);
-    c.fillStyle = '#7c8aa8';
+    c.fillStyle = '#949fb1';
     c.font = '400 15px ' + KR;
     c.fillText('기준일 ' + F.day(Data.asOf()) + ' 종가 · 지연 데이터', W - 76, 138);
     c.textAlign = 'left';
 
     function panel(x, y, wd, ht, key, color) {
-      c.fillStyle = 'rgba(24,33,64,.72)';
+      c.fillStyle = 'rgba(37,44,58,.8)';
       roundRect(c, c, x, y, wd, ht, 18); c.fill();
-      c.strokeStyle = '#2b3a5e'; c.lineWidth = 1.5;
+      c.strokeStyle = '#4c5668'; c.lineWidth = 1.5;
       roundRect(c, c, x, y, wd, ht, 18); c.stroke();
       c.fillStyle = color;
       roundRect(c, c, x, y + 22, 5, ht - 44, 3); c.fill();
 
       var s = t[key];
-      c.fillStyle = '#a8b6d0';
+      c.fillStyle = '#b3bdcb';
       c.font = '600 22px ' + KR;
       c.fillText(s.symbol + ' · ' + s.label, x + 30, y + 44);
-      c.fillStyle = '#ffffff';
+      c.fillStyle = '#e8ecf4';
       c.font = '800 78px ' + KR;
       var numText = F.num(s.score);
       c.fillText(numText, x + 28, y + 132);
       var numW = c.measureText(numText).width;
-      c.fillStyle = '#7c8aa8';
+      c.fillStyle = '#949fb1';
       c.font = '500 22px ' + KR;
       c.fillText('/ 100', x + 28 + numW + 14, y + 132);
       c.fillStyle = color;
       c.font = '700 24px ' + KR;
       c.fillText(s.verdict.label, x + 30, y + 172);
-      c.fillStyle = '#8b9ab8';
+      c.fillStyle = '#9aa5b6';
       c.font = '400 17px ' + KR;
       c.fillText(s.verdict.sub, x + 30, y + 200);
     }
-    panel(72, 180, 500, 220, 'ndx', '#4c8dff');
-    panel(628, 180, 500, 220, 'sox', '#22d3a5');
+    panel(72, 180, 500, 220, 'ndx', '#6a9ae0');
+    panel(628, 180, 500, 220, 'sox', '#43b795');
 
-    c.fillStyle = '#e9eefc';
+    c.fillStyle = '#e8ecf4';
     c.font = '700 27px ' + KR;
     c.fillText('고점 대비 ' + F.pct(now.dd, 1) + '  ·  고점 ' + F.day(now.peak_date) + ' 이후 ' + now.offset + '거래일', 74, 462);
 
     if (closest) {
       var m = closest.now_match;
-      c.fillStyle = '#8b9ab8';
+      c.fillStyle = '#9aa5b6';
       c.font = '400 19px ' + KR;
       c.fillText('가장 닮은 사례  ' + closest.short + ' ' + F.day(m.date) + ' (고점 +' + m.day + '거래일)  →  그 뒤 30거래일 ' + F.pct(m.fwd30, 1), 74, 498);
     }
 
-    c.fillStyle = '#5f6f8c';
+    c.fillStyle = '#7c8798';
     c.font = '400 15px ' + KR;
     c.fillText('정보 제공·복기 목적. 매수·매도 추천이 아닙니다.  여섯 지표는 원본 앱(v2.7.0) 식 그대로 계산했습니다.', 74, 566);
 
@@ -464,7 +464,7 @@
     var ladderHtml = ladder.map(function (x) {
       var on = s.verdict.level === x.lv;
       return '<div class="row" style="gap:10px;padding:7px 10px;border-radius:9px;' +
-        (on ? 'background:#16264a;border:1px solid #2f4f86' : 'border:1px solid transparent') + '">' +
+        (on ? 'background:#2c3a52;border:1px solid #4a6b96' : 'border:1px solid transparent') + '">' +
         '<span class="badge ' + (on ? 'blue' : 'grey') + '" style="min-width:78px;justify-content:center">' + x.t + '</span>' +
         '<b style="font-size:13.5px">' + x.a + '</b><span class="dim small">' + x.sub + '</span></div>';
     }).join('');
@@ -537,7 +537,7 @@
             '<button class="chip on" data-hist="daily">일별(최근 400거래일)</button>' +
             '<button class="chip" data-hist="weekly">주별(전체)</button>' +
           '</div></div>' +
-        '<div class="legend"><span><i style="background:#4c8dff"></i>TQQQ · 나스닥</span><span><i style="background:#22d3a5"></i>SOXL · 반도체</span></div>' +
+        '<div class="legend"><span><i style="background:#6a9ae0"></i>TQQQ · 나스닥</span><span><i style="background:#43b795"></i>SOXL · 반도체</span></div>' +
         '<div class="chart-box" id="histChart"></div>' +
         '<p class="note" id="histNote"></p>' +
       '</div>' +
@@ -568,20 +568,20 @@
       Charts.line(el('#histChart', view), {
         height: 240,
         series: [
-          { name: 'TQQQ', color: '#4c8dff', points: ndx, width: 1.7 },
-          { name: 'SOXL', color: '#22d3a5', points: sox, width: 1.7 }
+          { name: 'TQQQ', color: '#6a9ae0', points: ndx, width: 1.7 },
+          { name: 'SOXL', color: '#43b795', points: sox, width: 1.7 }
         ],
         xMin: 0, xMax: n - 1, yMin: 0, yMax: 100,
         yTicks: [0, 25, 50, 70, 80, 90, 100],
         xTicks: ticks,
         hlines: [
-          { y: 90, color: '#2f6b57', label: '90', dash: '4 4' },
-          { y: 70, color: '#3a4460' },
-          { y: 50, color: '#3a4460' }
+          { y: 90, color: '#3f8168', label: '90', dash: '4 4' },
+          { y: 70, color: '#525c6e' },
+          { y: 50, color: '#525c6e' }
         ],
         markers: [
-          { x: n - 1, y: src[n - 1][1], color: '#4c8dff', r: 3 },
-          { x: n - 1, y: src[n - 1][2], color: '#22d3a5', r: 3 }
+          { x: n - 1, y: src[n - 1][1], color: '#6a9ae0', r: 3 },
+          { x: n - 1, y: src[n - 1][2], color: '#43b795', r: 3 }
         ]
       });
       el('#histNote', view).textContent = histMode === 'daily'
@@ -807,7 +807,7 @@
           series: [{ name: '저점 대비', color: c.color, points: pts }],
           xMin: xr[0], xMax: xr[1],
           xTicks: [xr[0], -126, 0, 126, xr[1]].map(function (x) { return { x: x, label: (x > 0 ? '+' : '') + x }; }),
-          hlines: [{ y: 0, color: '#3f5a8c', label: '저점 = 0%', dash: '4 4' }],
+          hlines: [{ y: 0, color: '#5d7096', label: '저점 = 0%', dash: '4 4' }],
           markers: [{ x: 0, y: 0, color: c.color, label: '저점', r: 4 }],
           yDigits: 0
         });
@@ -825,9 +825,9 @@
           xMin: all[0][0], xMax: all[all.length - 1][0],
           xTicks: [{ x: -252, label: '-252' }, { x: 0, label: '고점' }, { x: 126, label: '+126' }, { x: all[all.length - 1][0], label: '+' + all[all.length - 1][0] }],
           yMin: Math.min(0, Math.floor(minY / 10) * 10), yMax: 10,
-          hlines: [{ y: 0, color: '#3f5a8c', label: '고점 = 0%' }],
-          vlines: [{ x: 0, color: '#3f5a8c' }],
-          markers: [{ x: all[ti][0], y: all[ti][1], color: '#fff', label: '최저 ' + F.pct(all[ti][1], 1), r: 4 }],
+          hlines: [{ y: 0, color: '#5d7096', label: '고점 = 0%' }],
+          vlines: [{ x: 0, color: '#5d7096' }],
+          markers: [{ x: all[ti][0], y: all[ti][1], color: '#e8ecf4', label: '최저 ' + F.pct(all[ti][1], 1), r: 4 }],
           yDigits: 0
         });
         el('#caseNote', view).textContent = '고점 종가를 0%로 두고 고점 252거래일 전부터 252거래일 뒤까지. 고점 전 자료는 ' +
@@ -1116,7 +1116,7 @@
       var on = editRec && editRec.principles && editRec.principles.checkedList
         ? editRec.principles.checkedList.indexOf(p.id) >= 0 : false;
       return '<label class="chip" style="cursor:pointer;display:flex;align-items:center;gap:8px;padding:8px 12px">' +
-        '<input type="checkbox" data-prin="' + p.id + '" ' + (on ? 'checked' : '') + ' style="width:16px;height:16px;accent-color:#4c8dff">' +
+        '<input type="checkbox" data-prin="' + p.id + '" ' + (on ? 'checked' : '') + ' style="width:16px;height:16px;accent-color:#6a9ae0">' +
         '<span>' + esc(p.text) + '</span></label>';
     }).join('');
 
@@ -1152,7 +1152,7 @@
         '<div id="prinList">' + pr.map(function (p, i) {
           return '<div class="row" style="margin-bottom:6px">' +
             '<span class="badge grey" style="min-width:26px;justify-content:center">' + (i + 1) + '</span>' +
-            '<input data-prin-text="' + p.id + '" value="' + esc(p.text) + '" style="flex:1;background:#0d1428;border:1px solid var(--line2);border-radius:9px;color:var(--tx);padding:7px 10px;font:inherit">' +
+            '<input data-prin-text="' + p.id + '" value="' + esc(p.text) + '" style="flex:1;background:var(--sunken);border:1px solid var(--line2);border-radius:9px;color:var(--tx);padding:7px 10px;font:inherit">' +
             '<button class="linkbtn del" data-prin-del="' + p.id + '" type="button">지운다</button></div>';
         }).join('') + '</div>' +
         (pr.length ? '' : '<div class="empty">원칙이 없습니다. 추가하면 저장 전 체크리스트가 됩니다.</div>') +
@@ -1361,7 +1361,7 @@
     }).filter(Boolean);
 
     var markers = trades.filter(function (t) { return t.ret !== null; }).map(function (t) {
-      return { x: t.dd, y: t.ret, color: '#ffffff', label: t.r.sym + ' ' + F.day(t.r.date).slice(5), r: 4 };
+      return { x: t.dd, y: t.ret, color: '#e8ecf4', label: t.r.sym + ' ' + F.day(t.r.date).slice(5), r: 4 };
     });
 
     var near = Data.analogNear(focusDd, 6);
@@ -1456,7 +1456,7 @@
             }).join('') +
           '</div></div>' +
         '<div class="pill-row" style="margin-bottom:10px">' +
-          '<button class="chip ' + (analogFilter === 'all' ? 'on' : '') + '" data-case="all"><span class="dot" style="background:#8b9ab8"></span>전체</button>' +
+          '<button class="chip ' + (analogFilter === 'all' ? 'on' : '') + '" data-case="all"><span class="dot" style="background:#9aa5b6"></span>전체</button>' +
           cases.map(function (c) {
             return '<button class="chip ' + (analogFilter === c.id ? 'on' : '') + '" data-case="' + c.id + '"><span class="dot" style="background:' + c.color + '"></span>' + esc(c.short) + '</button>';
           }).join('') +
@@ -1525,8 +1525,8 @@
       xLabel: '고점 대비 낙폭 (%)',
       yLabel: analogHorizon + '일 뒤 수익률 (%)',
       markers: markers,
-      vlines: [{ x: focusDd, color: '#ffffff', label: '기준 ' + F.pct(focusDd, 1), dash: '4 4' }],
-      hlines: [{ y: 0, color: '#4b6392' }]
+      vlines: [{ x: focusDd, color: '#e8ecf4', label: '기준 ' + F.pct(focusDd, 1), dash: '4 4' }],
+      hlines: [{ y: 0, color: '#5f7396' }]
     });
 
     on(view, 'click', '[data-hor]', function (e, t) {

@@ -30,7 +30,7 @@
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   }
 
-  var AXIS = '#37507d', GRID = '#1e2b49', TXT = '#8b9ab8';
+  var AXIS = '#5b6a82', GRID = '#333c4a', TXT = '#9aa5b6';
 
   /**
    * 꺾은선 차트.
@@ -112,16 +112,16 @@
     (opt.markers || []).forEach(function (m) {
       var x = sx(m.x), y = sy(m.y);
       if (m.shape === 'square') {
-        s.push('<rect x="' + (x - 3.5) + '" y="' + (y - 3.5) + '" width="7" height="7" fill="' + (m.color || '#fff') + '"/>');
+        s.push('<rect x="' + (x - 3.5) + '" y="' + (y - 3.5) + '" width="7" height="7" fill="' + (m.color || '#e8ecf4') + '"/>');
       } else if (m.shape === 'diamond') {
-        s.push('<path d="M' + x + ' ' + (y - 5) + 'L' + (x + 5) + ' ' + y + 'L' + x + ' ' + (y + 5) + 'L' + (x - 5) + ' ' + y + 'Z" fill="' + (m.color || '#fff') + '"/>');
+        s.push('<path d="M' + x + ' ' + (y - 5) + 'L' + (x + 5) + ' ' + y + 'L' + x + ' ' + (y + 5) + 'L' + (x - 5) + ' ' + y + 'Z" fill="' + (m.color || '#e8ecf4') + '"/>');
       } else {
-        s.push('<circle cx="' + x.toFixed(1) + '" cy="' + y.toFixed(1) + '" r="' + (m.r || 3.2) + '" fill="' + (m.color || '#fff') + '"/>');
+        s.push('<circle cx="' + x.toFixed(1) + '" cy="' + y.toFixed(1) + '" r="' + (m.r || 3.2) + '" fill="' + (m.color || '#e8ecf4') + '"/>');
       }
       if (m.label) {
         var anchor = m.anchor || (x > W * 0.75 ? 'end' : 'start');
         var dx = anchor === 'end' ? -7 : 7;
-        s.push('<text x="' + (x + dx).toFixed(1) + '" y="' + (y - 7).toFixed(1) + '" text-anchor="' + anchor + '" font-size="10.5" fill="' + esc(m.color || '#dbe3f4') + '">' + esc(m.label) + '</text>');
+        s.push('<text x="' + (x + dx).toFixed(1) + '" y="' + (y - 7).toFixed(1) + '" text-anchor="' + anchor + '" font-size="10.5" fill="' + esc(m.color || '#d5dce8') + '">' + esc(m.label) + '</text>');
       }
     });
 
@@ -181,14 +181,14 @@
     });
     pts.forEach(function (p) {
       var cx = sx(p.x), cy = sy(p.y);
-      s.push('<circle cx="' + cx.toFixed(1) + '" cy="' + cy.toFixed(1) + '" r="' + (p.r || 2.6) + '" fill="' + (p.color || '#4c8dff') + '" fill-opacity="' + (p.opacity || 0.55) + '"' + (p.stroke ? ' stroke="' + p.stroke + '" stroke-width="1.5"' : '') + '>');
+      s.push('<circle cx="' + cx.toFixed(1) + '" cy="' + cy.toFixed(1) + '" r="' + (p.r || 2.6) + '" fill="' + (p.color || '#6a9ae0') + '" fill-opacity="' + (p.opacity || 0.55) + '"' + (p.stroke ? ' stroke="' + p.stroke + '" stroke-width="1.5"' : '') + '>');
       if (p.title) s.push('<title>' + esc(p.title) + '</title>');
       s.push('</circle>');
     });
     (opt.markers || []).forEach(function (m) {
       var x = sx(m.x), y = sy(m.y);
-      s.push('<path d="M' + x.toFixed(1) + ' ' + (y - 6).toFixed(1) + 'L' + (x + 6).toFixed(1) + ' ' + y.toFixed(1) + 'L' + x.toFixed(1) + ' ' + (y + 6).toFixed(1) + 'L' + (x - 6).toFixed(1) + ' ' + y.toFixed(1) + 'Z" fill="' + (m.color || '#fff') + '" stroke="#0b1020" stroke-width="1"/>');
-      if (m.label) s.push('<text x="' + (x + 9).toFixed(1) + '" y="' + (y - 8).toFixed(1) + '" font-size="10.5" fill="' + (m.color || '#fff') + '">' + esc(m.label) + '</text>');
+      s.push('<path d="M' + x.toFixed(1) + ' ' + (y - 6).toFixed(1) + 'L' + (x + 6).toFixed(1) + ' ' + y.toFixed(1) + 'L' + x.toFixed(1) + ' ' + (y + 6).toFixed(1) + 'L' + (x - 6).toFixed(1) + ' ' + y.toFixed(1) + 'Z" fill="' + (m.color || '#e8ecf4') + '" stroke="#1a1f2b" stroke-width="1"/>');
+      if (m.label) s.push('<text x="' + (x + 9).toFixed(1) + '" y="' + (y - 8).toFixed(1) + '" font-size="10.5" fill="' + (m.color || '#e8ecf4') + '">' + esc(m.label) + '</text>');
     });
     if (opt.xLabel) s.push('<text x="' + (pad.l + iw / 2) + '" y="' + (H - 1) + '" text-anchor="middle" font-size="10.5" fill="' + TXT + '">' + esc(opt.xLabel) + '</text>');
     if (opt.yLabel) s.push('<text x="10" y="' + (pad.t + 2) + '" font-size="10.5" fill="' + TXT + '">' + esc(opt.yLabel) + '</text>');

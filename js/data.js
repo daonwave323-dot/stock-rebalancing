@@ -106,7 +106,7 @@
 
   D.caseColor = function (id) {
     var c = D.caseById(id);
-    return c ? c.color : '#4c8dff';
+    return c ? c.color : '#6a9ae0';
   };
 
   w.Data = D;
