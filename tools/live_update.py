@@ -122,7 +122,7 @@ def singular_score(values, target):
 def verdict(score):
     """원본 verdictOf 경계(90·80·70·50)."""
     if score >= 90:
-        return {"label": "계획의 50% 투입", "sub": "역사적 바닥 구간입니다", "tone": "good", "level": 90}
+        return {"label": "계획의 50% 투입", "sub": "1년에 한 번 수준으로 오는 자리입니다", "tone": "good", "level": 90}
     if score >= 80:
         return {"label": "계획의 25% 투입", "sub": "1차 진입 자리입니다", "tone": "blue", "level": 80}
     if score >= 70:
@@ -200,12 +200,33 @@ def vix_stats(closes):
     }
 
 
-def confirmed_series(series, now_et):
-    """ScoreLive.confirmed(): 오늘 봉이 아직 안 끝났으면(16:05 ET 전) 뺀다."""
+def session_close_minutes(meta, now_et, default=16 * 60):
+    """그날 정규장 마감 시각(ET 분). 반나절 장이면 13:00 처럼 짧다.
+
+    quote 메타의 currentTradingPeriod.regular 가 오늘 것이고 길이가 6시간 미만이면
+    반나절 장으로 본다(추수감사절 다음 날 등). 없으면 16:00."""
+    try:
+        tp = ((meta or {}).get("currentTradingPeriod") or {}).get("regular") or {}
+        start, end = int(tp.get("start") or 0), int(tp.get("end") or 0)
+        if start and end:
+            start_et = datetime.fromtimestamp(start, ET)
+            end_et = datetime.fromtimestamp(end, ET)
+            if start_et.date() == now_et.date() and 0 < (end - start) < 6 * 3600:
+                return end_et.hour * 60 + end_et.minute
+    except Exception:
+        pass
+    return default
+
+
+def confirmed_series(series, now_et, close_minutes=16 * 60):
+    """ScoreLive.confirmed(): 오늘 봉이 아직 안 끝났으면 뺀다.
+
+    마감 5분 뒤부터 오늘 봉을 확정으로 쓴다. 반나절 장(13:00 마감)은 13:05 부터 —
+    기존에는 늘 16:05 를 기준으로 해서 반나절 장 뒤 3시간 동안 확정 값이 하루 전에 머물렀다."""
     if not series:
         return series
     minutes = now_et.hour * 60 + now_et.minute
-    if series[-1][0] == now_et.date() and minutes < 16 * 60 + 5:
+    if series[-1][0] == now_et.date() and minutes < close_minutes + 5:
         return series[:-1]
     return series
 
@@ -329,6 +350,39 @@ def bars_from_chart(js):
         d = datetime.fromtimestamp(t, tz=timezone.utc).date()
         got[d] = float(c)
     return sorted(got.items()), (r.get("meta") or {})
+
+
+def ohlc_tail(js, n=23):
+    """chart 응답 → 최근 n일 시·고·저·종. 화면의 '최근 한 달 일봉' 재료.
+
+    일봉은 이미 점수 계산에 받고 있으므로 추가 요청이 없다. 5년치를 다 넣지 않고 꼬리만 남긴다."""
+    try:
+        r = js["chart"]["result"][0]
+        stamps = r.get("timestamp") or []
+        q = ((r.get("indicators") or {}).get("quote") or [{}])[0]
+        opens, highs, lows, closes = (q.get("open") or [], q.get("high") or [],
+                                      q.get("low") or [], q.get("close") or [])
+    except Exception:
+        return []
+
+    def at(arr, i):
+        return arr[i] if i < len(arr) else None
+
+    rows = []
+    for i, t in enumerate(stamps):
+        c = at(closes, i)
+        if c is None:
+            continue
+        o, h, l = at(opens, i), at(highs, i), at(lows, i)
+        o = c if o is None else o
+        h = max(o, c) if h is None else h
+        l = min(o, c) if l is None else l
+        rows.append({
+            "d": datetime.fromtimestamp(t, tz=timezone.utc).date().isoformat(),
+            "o": round(float(o), 4), "h": round(float(h), 4),
+            "l": round(float(l), 4), "c": round(float(c), 4),
+        })
+    return rows[-n:]
 
 
 def iso(ts):
@@ -522,15 +576,15 @@ def build_symbol(now_et, symbol, quote, series, meta, fx):
     return out
 
 
-def scores_for(symbol, series, now_et, key, vix_series, live_px, live_session):
+def scores_for(symbol, series, now_et, key, vix_series, live_px, live_session, close_minutes=16 * 60):
     """확정(종가) 점수와 실시간(추정) 점수."""
     # 오늘(ET)보다 뒤 날짜의 봉은 쓰지 않는다 — 시각대에 따라 생길 수 있는 미래 봉을 막는다
     series = [x for x in series if x[0] <= now_et.date()]
     vix_series = [x for x in vix_series if x[0] <= now_et.date()]
-    conf = confirmed_series(series, now_et)
+    conf = confirmed_series(series, now_et, close_minutes)
     if len(conf) < 200:
         raise RuntimeError(symbol + ": 일봉이 200개 미만이라 지표를 낼 수 없습니다")
-    vconf = confirmed_series(vix_series, now_et)
+    vconf = confirmed_series(vix_series, now_et, close_minutes)
     vc = vix_stats([c for _, c in vconf])
     # 원본 규칙: VIX 는 장외에 거의 안 움직인다 — 장중이라도 확정 봉까지만 쓴다.
 
@@ -663,6 +717,7 @@ def main(argv=None):
     need_daily = [s for s in REQUIRED if s in ("TQQQ", "SOXL", "^VIX")]
     daily = {}
     metas = {}
+    tails = {}
     for s in need_daily:
         try:
             js = fx.chart(s, rng="5y", interval="1d")
@@ -671,6 +726,7 @@ def main(argv=None):
                 raise RuntimeError("일봉 " + str(len(bars)) + "개")
             daily[s] = bars
             metas[s] = meta
+            tails[s] = ohlc_tail(js, 23)
         except Exception as e:  # noqa: BLE001
             errors.append(s + ": " + str(e)[:120])
 
@@ -693,8 +749,9 @@ def main(argv=None):
         meta = metas.get(sym) or {}
         try:
             base = build_symbol(now_et, sym, q, daily[sym], meta, fxinfo)
+            close_min = session_close_minutes(meta, now_et)
             conf, live = scores_for(sym, daily[sym], now_et, key, vix_series,
-                                    base["sessionPrice"], base["session"])
+                                    base["sessionPrice"], base["session"], close_min)
             base["score"] = conf["score"]
             base["scoreAsOf"] = conf["asOf"]
             base["scoreBasis"] = "close"
@@ -710,6 +767,7 @@ def main(argv=None):
             base["scoreLiveRows"] = live["rows"] if live else None
             base["scoreLivePrice"] = live["priceUsed"] if live else None
             base["scoreLiveValues"] = live["values"] if live else None
+            base["dayBars"] = tails.get(sym) or []
             base["target"] = key
             symbols_out[sym] = base
         except Exception as e:  # noqa: BLE001

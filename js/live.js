@@ -367,6 +367,8 @@
         /* 보유에서 온 것은 저장하지 않는다 — 중복을 막기 위해 추가분만 남긴다 */
         return true;
       }));
+      /* 관심 목록은 증시 탭과 한 벌(watch.us·watch.kr)이다 — 여기서 담아도 같이 남는다. */
+      if (w.Mkt && Mkt.addWatch) Mkt.addWatch(Mkt.marketOf(sym), sym, sym);
       inp.value = '';
       render();
     });
@@ -379,6 +381,13 @@
       if (D) applyScores(D);
       else if (w.Data && w.Data.ready) applyScores(w.Data);
       mountStrip();
+      /* 다른 파일(매수 지표)도 같은 파일을 보게 사본을 갈아 끼우고 알린다 */
+      try { if (w.Basis && w.Basis.adopt) w.Basis.adopt(live); } catch (e) {}
+      try {
+        document.dispatchEvent(new CustomEvent('stockrebal:live', { detail: { updatedAt: live && live.updatedAt } }));
+      } catch (e2) {
+        try { document.dispatchEvent(new Event('stockrebal:live')); } catch (e3) {}
+      }
       return D;
     }).catch(function (e) {
       LIVE.ok = false; LIVE.error = String(e && e.message || e);
@@ -402,6 +411,12 @@
     });
   }
   wrap();
+
+  /* 화면이 직접 부를 수 있는 새로고침 — 같은 5분 경로를 재사용한다(새 타이머를 만들지 않는다) */
+  w.Live = {
+    refresh: function () { return refresh(null); },
+    data: function () { return LIVE.data; }
+  };
 
   /* 띠 모양 — style.css 를 건드리지 않도록 이 파일에서만 넣는다 */
   var css = document.createElement('style');

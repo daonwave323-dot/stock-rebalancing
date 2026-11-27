@@ -29,7 +29,8 @@
   function liveView() { return document.getElementById('view'); }
 
   var ST = { target: 'ndx', mode: 'auto', manual: {}, open: {}, edited: false };
-  var LIVE = {};
+  /* 화면 값 한 벌의 캐시 — 대상·기준(정규장/프리마켓)·모드(자동/수동)가 바뀌면 새로 만든다 */
+  var CUR = { key: null, values: null };
   var crashScale = 'peak';
 
   /* ------------------------------------------------------------ 계산(원본과 같은 식) */
@@ -64,7 +65,7 @@
 
   /* 원본 Singularity.verdict — 경계 90·80·70·50, 문구 그대로 */
   function verdictOf(s) {
-    if (s >= 90) return { label: '계획의 50% 투입', sub: '역사적 바닥 구간입니다', tone: 'good', level: 90 };
+    if (s >= 90) return { label: '계획의 50% 투입', sub: '1년에 한 번 수준으로 오는 자리입니다', tone: 'good', level: 90 };
     if (s >= 80) return { label: '계획의 25% 투입', sub: '1차 진입 자리입니다', tone: 'blue', level: 80 };
     if (s >= 70) return { label: '계획의 25% 투입', sub: '바닥의 시작 구간입니다', tone: 'purple', level: 70 };
     if (s >= 50) return { label: '관망', sub: '조정은 맞지만 아직 아닙니다', tone: 'amber', level: 50 };
@@ -129,7 +130,7 @@
     ST.mode = s.mode === 'manual' ? 'manual' : 'auto';
     ST.manual = s.manual || {};
     ST.open = s.open || {};
-    LIVE = {};
+    CUR = { key: null, values: null };
   }
   function saveState() {
     S.set('gauge', { target: ST.target, mode: ST.mode, manual: ST.manual, open: ST.open });
@@ -140,6 +141,19 @@
   function latest(t) {
     var T = Data.gauge.targets[t];
     var base = Data.gauge.as_of;
+    /* 확정(종가) 값은 5분 파이프라인이 live.json 에 매일 새로 넣는다(마지막 완료 정규장).
+       gauge.json 보다 새로우면 그것을 먼저 쓴다 — 화면마다 확정 날짜가 어긋나지 않게. */
+    var c = (w.Basis && Basis.confirmed) ? Basis.confirmed(t) : null;
+    if (c && c.asOf && base && c.asOf > base) {
+      var cdet = Object.assign({}, T.detail);
+      if (c.close !== null && c.close !== undefined) cdet.close = c.close;
+      if (c.peak) cdet.peak = c.peak;
+      if (c.ma200) cdet.ma200 = c.ma200;
+      if (c.vix !== null && c.vix !== undefined) cdet.vix = c.vix;
+      if (c.ma50_vix !== null && c.ma50_vix !== undefined) cdet.ma50_vix = c.ma50_vix;
+      if (c.vix_samples) cdet.vix_samples = c.vix_samples;
+      return { rows: c.rows, as_of: c.asOf, detail: cdet, score: c.score };
+    }
     var sc = Data.scores && Data.scores.targets ? Data.scores.targets[t] : null;
     if (sc && sc.rows && sc.rows.length && sc.as_of && base && sc.as_of > base) {
       var det = sc.detail || T.detail;
@@ -158,18 +172,185 @@
     return o;
   }
 
-  function liveValues(t) {
-    if (!LIVE[t]) {
-      var base = autoValues(t);
-      if (ST.mode === 'manual' && ST.manual[t]) {
-        IND.forEach(function (s) {
-          var v = ST.manual[t][s.key];
-          if (v !== null && v !== undefined && !isNaN(v)) base[s.key] = v;
-        });
-      }
-      LIVE[t] = base;
+  /* 지금 화면이 쓰는 값 한 벌.
+     · 수동 — 내가 넣은 값이 최우선(실시간·확정이 덮어쓰지 않는다).
+     · 자동 + 프리마켓 — live.json 의 지금 값으로 다시 낸 여섯 지표(없으면 확정 종가).
+     · 자동 + 정규장 — 마지막 확정 종가의 여섯 지표. */
+  function curValues(t, basis, pair) {
+    var key = t + '|' + basis + '|' + ST.mode;
+    if (CUR.key === key && CUR.values) return CUR.values;
+    var v;
+    if (ST.mode === 'manual' && ST.manual[t]) {
+      v = autoValues(t);
+      IND.forEach(function (spec) {
+        var x = ST.manual[t][spec.key];
+        if (x !== null && x !== undefined && !isNaN(x)) v[spec.key] = Number(x);
+      });
+    } else if (basis === 'live' && pair && pair.values) {
+      v = {};
+      IND.forEach(function (spec) {
+        var x = pair.values[spec.key];
+        v[spec.key] = (x === null || x === undefined || isNaN(x)) ? null : Number(x);
+      });
+    } else {
+      v = autoValues(t);
     }
-    return LIVE[t];
+    CUR = { key: key, values: v };
+    return v;
+  }
+
+  function valuesRef(t) {
+    var basis = w.Basis ? Basis.get() : 'close';
+    var pair = (basis === 'live' && w.Basis && Basis.liveFor) ? Basis.liveFor(t) : null;
+    return curValues(t, basis, pair);
+  }
+
+  function dropValues() { CUR = { key: null, values: null }; }
+
+  /* 점수·막대·판정 문구·레이더·기여도·오늘 선이 모두 이 한 벌에서 나온다(값을 섞지 않는다).
+     반올림 규칙은 홈과 같다 — live.json 이 계산해 둔 점수(확정 score / 추정 scoreLive)를 먼저 쓰고,
+     없거나 손으로 만졌을 때만 여기서 다시 낸다. */
+  function snapshot(t) {
+    var L = latest(t);
+    var basis = w.Basis ? Basis.get() : 'close';
+    var pair = (basis === 'live' && w.Basis && Basis.liveFor) ? Basis.liveFor(t) : null;
+    var values = curValues(t, basis, pair);
+    var calc = scoreOf(values, t);
+    var shown;
+    if (ST.mode === 'manual' || ST.edited) {
+      shown = calc.score;
+    } else if (basis === 'live' && pair && pair.score !== null && pair.score !== undefined) {
+      shown = pair.score;
+    } else if (L.score !== null && L.score !== undefined) {
+      shown = L.score;
+    } else {
+      shown = calc.score;
+    }
+    var result = { raw: calc.raw, score: shown, rows: calc.rows, weightSum: calc.weightSum, sum: calc.sum };
+    return {
+      t: t, L: L, basis: basis, pair: pair, values: values, result: result,
+      verdict: verdictOf(shown), axes: axesOf(values, t), manual: ST.mode === 'manual'
+    };
+  }
+
+  /* live.json 의 지표 추적용 정보 — 점수·값·시각·세션·화면 갱신 시각 */
+  function liveInfo(t) {
+    if (!w.Basis || !Basis.meta) return null;
+    return Basis.meta(t);
+  }
+
+  function etPart(meta) {
+    if (!meta) return '';
+    return (meta.atEt || '') + (meta.sessionLabel ? ' · ' + meta.sessionLabel : '');
+  }
+
+  /* 가격 — 고른 모드·기준에 따라 확정 종가 / 실시간 체결가 / 지표에서 역산한 값.
+     역산은 낙폭(price = 5년 최고 × (1 − dd/100))과 200일선 이격(price = 200일선 × (1 + gap/100))
+     두 지표에서만 된다(RSI·VIX는 과거 시계열이 있어야 해서 가격으로 되돌릴 수 없다).
+     둘 다 유효할 때는 마지막으로 손댄 지표를 기준으로 삼는다(ST.priceSrc). */
+  function priceInfo(snap) {
+    var T = Data.gauge.targets[snap.t];
+    var d = (snap.L && snap.L.detail) || T.detail || {};
+    var v = snap.values || {};
+    var peak = Number(d.peak), ma200 = Number(d.ma200);
+    var dd = v.dd, gap = v.gap;
+    var pDd = (peak > 0 && dd !== null && dd !== undefined && !isNaN(dd)) ? peak * (1 - Math.abs(dd) / 100) : null;
+    var pGap = (ma200 > 0 && gap !== null && gap !== undefined && !isNaN(gap)) ? ma200 * (1 + gap / 100) : null;
+    var src = (ST.priceSrc && ST.priceSrc.t === snap.t) ? ST.priceSrc.key : null;
+    var touched = snap.manual || ST.edited || !!src;
+    var px = null, kind = 'close';
+    if (touched) {
+      if (src === 'gap' && pGap) { px = pGap; kind = 'gap'; }
+      else if (src === 'dd' && pDd) { px = pDd; kind = 'dd'; }
+      else if (src === 'price' && ST.priceVal) { px = ST.priceVal; kind = 'price'; }
+      else if (pDd) { px = pDd; kind = 'dd'; }
+      else if (pGap) { px = pGap; kind = 'gap'; }
+      else if (ST.priceVal) { px = ST.priceVal; kind = 'price'; }
+      else { px = Number(d.close); kind = 'close'; }
+    } else if (snap.basis === 'live' && snap.pair && snap.pair.price) {
+      px = Number(snap.pair.price); kind = 'live';
+    } else {
+      px = Number(d.close); kind = 'close';
+    }
+    var tag = { dd: '역산 · 낙폭', gap: '역산 · 200일선', price: '직접 입력', live: '실시간 체결', close: '확정 종가' }[kind];
+    var cls = { dd: 'amber', gap: 'amber', price: 'blue', live: 'live', close: 'grey' }[kind];
+    return { price: px, kind: kind, tag: tag, badgeCls: cls, ddPrice: pDd, gapPrice: pGap, peak: peak, ma200: ma200, close: Number(d.close) };
+  }
+
+  function priceNoteHtml(snap, info) {
+    var v = snap.values || {};
+    var ddTxt = (v.dd === null || v.dd === undefined) ? '—' : F.signed(-Math.abs(v.dd), 1) + '%';
+    var gapTxt = (v.gap === null || v.gap === undefined) ? '—' : F.signed(v.gap, 1) + '%';
+    var head;
+    if (info.kind === 'dd') {
+      head = '가격은 낙폭 ' + ddTxt + '에서 역산' +
+        (info.gapPrice ? ' · 200일선 이격 ' + gapTxt + '로 세우면 $' + F.fixed(info.gapPrice, 2) : '');
+    } else if (info.kind === 'gap') {
+      head = '가격은 200일선 이격 ' + gapTxt + '에서 역산' +
+        (info.ddPrice ? ' · 낙폭 ' + ddTxt + '로 세우면 $' + F.fixed(info.ddPrice, 2) : '');
+    } else if (info.kind === 'price') {
+      head = '내가 넣은 가격' + (info.ddPrice ? ' · 낙폭 ' + ddTxt : '') + (info.gapPrice ? ' · 200일선 이격 ' + gapTxt : '');
+    } else if (info.kind === 'live') {
+      head = '실시간 체결가 · 5분마다 data/live.json 이 갱신';
+    } else {
+      head = '확정 종가 · ' + F.day(snap.L.as_of);
+    }
+    var tail = info.kind === 'close' ? ''
+      : ' · 확정 종가 $' + F.fixed(info.close, 2) + (snap.L.as_of ? '(' + F.day(snap.L.as_of) + ')' : '');
+    var cant = ST.edited || snap.manual
+      ? '<br><span class="g-noinv">가격 역산은 낙폭·200일선 이격 두 지표에서만 됩니다(RSI·VIX는 과거 시계열이 필요해 가격으로 되돌릴 수 없습니다).</span>'
+      : '';
+    return esc(head + tail) + cant;
+  }
+
+  function duoHtml(snap, meta) {
+    var L = snap.L;
+    var out = '<span class="pair ' + (snap.basis === 'close' && !snap.manual ? 'on' : '') + '">' +
+      '<span>확정</span><b>' + (L.score === null || L.score === undefined ? '—' : trim1(L.score)) + '</b>' +
+      '<i>' + F.day(L.as_of) + ' 종가' + (snap.basis === 'close' && !snap.manual ? ' · 지금 화면' : '') + '</i></span>';
+    if (meta) {
+      out += '<span class="pair ' + (snap.basis === 'live' && !snap.manual ? 'on' : '') + '">' +
+        '<span>실시간(추정)</span><b>' + (meta.score === null || meta.score === undefined ? '—' : trim1(meta.score)) + '</b>' +
+        '<i>' + esc(etPart(meta) || '값 없음') + (snap.basis === 'live' && !snap.manual ? ' · 지금 화면' : '') + '</i></span>';
+    }
+    if (snap.manual) {
+      out += '<span class="pair on"><span>직접 입력</span><b>' + trim1(snap.result.score) + '</b><i>내가 넣은 값 · 지금 화면</i></span>';
+    }
+    return '<div class="g-duo" id="gDuo">' + out + '</div>';
+  }
+
+  function srcNoteHtml(meta) {
+    if (!meta) return 'data/live.json 을 아직 받지 못했습니다 — 확정 종가로만 계산합니다.';
+    var stale = '';
+    if (meta.ageMin !== null && meta.ageMin > 30) {
+      stale = ' <span class="warn">· ' + meta.ageMin + '분째 그대로 — 자동 갱신이 멈췄을 수 있습니다</span>';
+    }
+    return 'data/live.json · 5분마다 갱신(GitHub Actions) · 마지막 갱신 ' + esc(meta.updatedAtKst || '—') + ' KST' + stale;
+  }
+
+  function modeSegHtml() {
+    return '<span class="g-seg" role="group" aria-label="입력 모드">' +
+      '<button type="button" data-mode="auto" class="' + (ST.mode === 'auto' ? 'on' : '') + '">자동</button>' +
+      '<button type="button" data-mode="manual" class="' + (ST.mode === 'manual' ? 'on' : '') + '">수동</button>' +
+    '</span>';
+  }
+
+  function basisSegHtml(snap) {
+    var b = snap.basis;
+    return '<span class="g-seg" role="group" aria-label="시세 기준">' +
+      '<button type="button" data-basis="close" class="' + (b === 'close' ? 'on' : '') + '">확정 종가</button>' +
+      '<button type="button" data-basis="live" class="' + (b === 'live' ? 'on' : '') + '">실시간(프리마켓)</button>' +
+    '</span>';
+  }
+
+  function basisBadgeHtml(snap, meta) {
+    /* snap.manual 이면 기준 전환은 참고용 — 값은 내가 넣은 값 그대로 */
+    var on = snap.manual ? '직접 입력값'
+      : (snap.basis === 'live'
+        ? (snap.pair ? '실시간(추정) · ' + (etPart(meta) || '시각 없음') : '실시간 값 없음 — 확정 종가')
+        : '확정 종가 · ' + F.day(snap.L.as_of));
+    var cls = snap.manual ? 'blue' : (snap.basis === 'live' && snap.pair ? 'live' : 'grey');
+    return '<span class="badge ' + cls + '">' + esc(on) + '</span>';
   }
 
   /* ------------------------------------------------------------ 그리기 도구 */
@@ -223,7 +404,7 @@
     return s.join('');
   }
 
-  function candleSvg(bars) {
+  function candleSvg(bars, liveDate, nowPx, nowTag) {
     if (!bars || !bars.length) return '<div class="empty">일봉 자료 없음</div>';
     var W = 720, H = 170, pad = { l: 44, r: 10, t: 14, b: 22 };
     var lo = Math.min.apply(null, bars.map(function (b) { return b[3]; }));
@@ -241,15 +422,58 @@
     });
     /* 이 구간 최저가 점선 */
     s.push('<line x1="' + pad.l + '" y1="' + y(lo).toFixed(1) + '" x2="' + (W - pad.r) + '" y2="' + y(lo).toFixed(1) + '" stroke="var(--amber)" stroke-width="1" stroke-dasharray="4 4"/>');
+    var liveIdx = -1;
     bars.forEach(function (b, i) {
       var up = b[4] >= b[1];
       var col = up ? 'var(--green)' : 'var(--red)';
-      s.push('<line x1="' + x(i).toFixed(1) + '" y1="' + y(b[2]).toFixed(1) + '" x2="' + x(i).toFixed(1) + '" y2="' + y(b[3]).toFixed(1) + '" stroke="' + col + '" stroke-width="1"/>');
+      var isLive = liveDate && b[0] === liveDate;
+      if (isLive) { liveIdx = i; col = 'var(--amber)'; }
+      s.push('<line x1="' + x(i).toFixed(1) + '" y1="' + y(b[2]).toFixed(1) + '" x2="' + x(i).toFixed(1) + '" y2="' + y(b[3]).toFixed(1) + '" stroke="' + col + '" stroke-width="1"' + (isLive ? ' stroke-dasharray="3 2" stroke-opacity="0.75"' : '') + '/>');
       var y0 = y(Math.max(b[1], b[4])), y1 = y(Math.min(b[1], b[4]));
-      s.push('<rect x="' + (x(i) - bw / 2).toFixed(1) + '" y="' + y0.toFixed(1) + '" width="' + bw.toFixed(1) + '" height="' + Math.max(1, y1 - y0).toFixed(1) + '" fill="' + col + '"/>');
+      s.push('<rect x="' + (x(i) - bw / 2).toFixed(1) + '" y="' + y0.toFixed(1) + '" width="' + bw.toFixed(1) + '" height="' + Math.max(1, y1 - y0).toFixed(1) + '" fill="' + col + '"' + (isLive ? ' fill-opacity="0.45" stroke="' + col + '" stroke-dasharray="3 2"' : '') + '/>');
     });
+    if (liveIdx >= 0) {
+      var bl = bars[liveIdx];
+      s.push('<circle cx="' + x(liveIdx).toFixed(1) + '" cy="' + y(bl[4]).toFixed(1) + '" r="3.5" fill="var(--amber)"/>');
+    }
+    /* 지금 가격 — 지표를 손대면 낙폭·200일선 이격에서 역산한 값이 여기로 움직인다 */
+    if (nowPx && nowPx > 0 && nowPx >= lo * 0.9 && nowPx <= hi * 1.1) {
+      var yNow = y(nowPx);
+      s.push('<line x1="' + pad.l + '" y1="' + yNow.toFixed(1) + '" x2="' + (W - pad.r) + '" y2="' + yNow.toFixed(1) + '" stroke="var(--amber)" stroke-width="1" stroke-dasharray="5 4" stroke-opacity="0.8"/>');
+      s.push('<text x="' + (W - pad.r - 2) + '" y="' + (yNow - 6).toFixed(1) + '" text-anchor="end" font-size="10.5" fill="var(--amber)">지금 $' + Number(nowPx).toFixed(2) + (nowTag ? ' · ' + nowTag : '') + '</text>');
+    }
     s.push('</svg>');
     return s.join('');
+  }
+
+  /* 최근 한 달 봉 — live.json 의 dayBars(5분 파이프라인이 5년 일봉에서 잘라 쓴 것)를 먼저,
+     없으면 gauge.json 의 한 달 봉을 쓴다. */
+  function monthBars(t) {
+    var e = (w.Basis && Basis.dayBars) ? Basis.dayBars(t) : null;
+    return (e && e.length) ? e : ((Data.gauge.candles || {})[t] || []);
+  }
+
+  function barSummary(bars, liveDate) {
+    if (!bars || !bars.length) return '일봉 자료가 없습니다.';
+    var cs = bars.map(function (b) { return b[4]; });
+    var hi = Math.max.apply(null, bars.map(function (b) { return b[2]; }));
+    var lo = Math.min.apply(null, bars.map(function (b) { return b[3]; }));
+    return bars[0][0] + '~' + bars[bars.length - 1][0] + ' · ' + bars.length + '일치 · 시작 $' + Number(cs[0]).toFixed(2) +
+      ' → 끝 $' + Number(cs[cs.length - 1]).toFixed(2) + ' · 최고 $' + Number(hi).toFixed(2) + ' · 최저 $' + Number(lo).toFixed(2) +
+      (liveDate && bars[bars.length - 1][0] === liveDate ? ' · 마지막 봉은 장중(점선)' : '');
+  }
+
+  /* 최근 한 달 점수 선 — 자료(gauge.json month) 끝에 지금 점수(같은 여섯 값)를 이어 붙인다 */
+  function monthScorePts(t, snap) {
+    var pts = (Data.gauge.month || []).map(function (p) {
+      return [p[0], t === 'ndx' ? p[1] : p[2]];
+    }).filter(function (p) { return p[1] > 0; });
+    var last = snap.L.as_of, sc = snap.result.score;
+    if (last && sc !== null && sc !== undefined) {
+      if (!pts.length || last > pts[pts.length - 1][0]) pts.push([last, sc]);
+      else if (last === pts[pts.length - 1][0]) pts[pts.length - 1][1] = sc;
+    }
+    return pts;
   }
 
   function section(key, title, subtitle, body, forcedOpen) {
@@ -272,50 +496,30 @@
     if (!G.axes) G.axes = AXES;
 
     var t = ST.target, T = G.targets[t];
-    var L = latest(t);
-    var values = liveValues(t);
-    var result = scoreOf(values, t);
-    /* 자동·무편집이면 자료의 점수를 그대로 쓴다(반올림 경계에서 홈과 0.1 어긋나지 않게) */
-    var shown = (ST.mode === 'auto' && !ST.edited && L.score !== undefined && L.score !== null) ? L.score : result.score;
-    result = { raw: result.raw, score: shown, rows: result.rows, weightSum: result.weightSum, sum: result.sum };
-    var v = verdictOf(result.score);
-    var axes = axesOf(values, t);
+    var snap = snapshot(t);
+    var L = snap.L, values = snap.values, result = snap.result, v = snap.verdict, axes = snap.axes;
     var D = L.detail, S_ = T.stat;
+    var meta = liveInfo(t);
+    var info = priceInfo(snap);
 
     var chips = '<button type="button" class="g-chip-target ' + (t === 'ndx' ? 'on' : '') + '" data-target="ndx">나스닥 TQQQ</button>' +
       '<button type="button" class="g-chip-target ' + (t === 'sox' ? 'on' : '') + '" data-target="sox">반도체 SOXL</button>';
 
-    var basis = ST.mode === 'manual'
-      ? '직접 입력값 · VIX ' + F.fixed(D.vix, 2) + ' · 입력한 값으로 계산'
-      : F.day(L.as_of) + ' 종가 기준 · VIX ' + F.fixed(D.vix, 2) +
-        ' · <span class="live">통계·일봉은 ' + F.day(G.as_of) + '까지</span>';
-
-    /* 1) 대상·가격·기준 */
+    /* 1) 대상·가격·기준 — 가격은 고른 모드·기준에 따라 확정 종가 / 실시간 체결가 / 역산값 */
     var head =
-      '<div class="row" style="justify-content:space-between;align-items:center;margin-bottom:4px">' +
+      '<div class="row" style="justify-content:space-between;align-items:flex-start;margin-bottom:2px">' +
         '<div class="row">' + chips + '</div>' +
-        '<div class="g-price">$' + F.fixed(D.close, 2) + '</div>' +
+        '<div class="g-price"><span id="gPrice">$' + F.fixed(info.price, 2) + '</span> ' +
+          '<span class="badge ' + info.badgeCls + '" id="gPriceTag">' + esc(info.tag) + '</span></div>' +
       '</div>' +
-      '<p class="g-basis">' + basis + '</p>';
-
-    /* 2) 값 직접 입력(원본 inputSection — 기본 접힘) */
-    var inputBody =
-      '<div class="g-row" style="margin-bottom:8px"><span class="g-seg">' +
-        '<button type="button" data-mode="auto" class="' + (ST.mode === 'auto' ? 'on' : '') + '">자동</button>' +
-        '<button type="button" data-mode="manual" class="' + (ST.mode === 'manual' ? 'on' : '') + '">수동(직접 입력)</button>' +
-      '</span></div>' +
-      '<p class="g-cap">' + (ST.mode === 'manual'
-        ? '수동 — 내가 넣은 값을 씁니다. 정적 배포라 자동 갱신은 없습니다.'
-        : '자동 — 마지막 확정 봉(종가) 값입니다. 슬라이더를 움직이면 그 값으로 다시 계산합니다.') + '</p>' +
-      '<div class="grid g2" style="margin-top:8px">' +
-        '<label class="field"><span>가격 ($)</span><input id="gPx" inputmode="decimal" value="' + F.fixed(D.close, 2) + '"></label>' +
-        '<label class="field"><span>VIX</span><input id="gVix" inputmode="decimal" value="' + F.fixed(D.vix, 2) + '"></label>' +
-      '</div>' +
-      '<p class="g-cap" id="gInputErr" style="color:var(--red);min-height:16px"></p>' +
-      '<button class="btn primary sm" type="button" id="gCalc">이 값으로 계산</button>' +
-      '<p class="note">가격과 VIX를 넣으면 여섯 지표를 자동과 <b>같은 식</b>으로 다시 냅니다(가격·VIX는 10년 일봉에서 200일선·주봉 RSI·5년 최고·50일 VIX 평균을 다시 계산).</p>';
+      '<p class="g-basis" id="gPriceNote">' + priceNoteHtml(snap, info) + '</p>' +
+      duoHtml(snap, meta) +
+      '<p class="g-src" id="gSrc">' + srcNoteHtml(meta) + '</p>';
 
     /* 3) 밸류게이지 카드 */
+    var topPanel = gaugeTopHtml(snap, T, G);
+
+    var rar = rarityOf(t);
     var gaugeCard =
       '<article class="panel g-card">' +
         '<div class="g-head"><h2>매수지표 · 밸류게이지</h2><span class="note">(높을수록 저평가·공포)</span>' +
@@ -328,9 +532,10 @@
         '<div class="g-hint" id="gHint">' + (result.score >= BUY
           ? '지금 매수 구간(' + BUY + ' 이상)입니다'
           : '매수 구간(' + BUY + ')까지 ' + trim1(BUY - result.score) + '점 남았습니다') + '</div>' +
-        '<div class="g-rarity">🎯 ' + esc(S_.rarity) + '</div>' +
+        '<div class="g-rarity" id="gRarity">🎯 ' + esc(rar ? rar.text : '기록 없음') + '</div>' +
         '<div class="g-contrib" id="gContrib">' + esc(contribText(result)) + '</div>' +
-      '</article>';
+      '</article>' +
+      '<p class="note" id="gRarityNote">' + rarityNoteHtml(rar, t) + '</p>';
 
     /* 4) 문턱 통계 */
     var statBlock =
@@ -352,22 +557,24 @@
         '<p class="g-state" id="gState">' + stateHtml(axes, result.score) + '</p>' +
       '</article>';
 
-    /* 6) 최근 한 달 두 차트 */
-    var candles = G.candles[t] || [];
-    var monthPts = (G.month || []).map(function (p) {
-      return [p[0], t === 'ndx' ? p[1] : p[2]];
-    }).filter(function (p) { return p[1] > 0; });
+    /* 6) 최근 한 달 두 차트 — 일봉(마지막 봉·지금 점)과 점수 선 */
+    var candles = monthBars(t);
+    var liveD = meta && meta.barLive ? meta.barLive : null;
+    var monthPts = monthScorePts(t, snap);
     var mMin = monthPts.length ? Math.min.apply(null, monthPts.map(function (p) { return p[1]; })) : 0;
     var mMax = monthPts.length ? Math.max.apply(null, monthPts.map(function (p) { return p[1]; })) : 0;
+    var summary = barSummary(candles, liveD);
 
     var chartsCard =
       '<article class="panel">' +
         '<div class="g-sub">주가 · 최근 한 달 일봉</div>' +
-        '<div class="g-cap">일별 · 자료 ' + candles.length + '일치 · 점선 = 이 구간 최저가</div>' +
-        '<div class="chart-box">' + candleSvg(candles) + '</div>' +
+        '<div class="g-cap">' + (liveD ? '실선 = 확정 봉, 점선·연한 봉 = 장중(지금). ' : '실선 = 확정 봉. ') +
+          '점선 = 이 구간 최저가 · 가로 점선 = 지금 가격</div>' +
+        '<div class="chart-box" id="gBars">' + candleSvg(candles, liveD, info.price, info.tag) + '</div>' +
+        '<p class="g-cap" id="gBarsSum">' + esc(summary) + '</p>' +
         '<div class="g-sub mt">밸류게이지 · 최근 한 달</div>' +
         '<div class="g-cap">' + (monthPts.length >= 2
-          ? '일별 · 이 구간 ' + Math.round(mMin) + '~' + Math.round(mMax) + ' · 점선 ' + BUY
+          ? '일별 · 이 구간 ' + Math.round(mMin) + '~' + Math.round(mMax) + ' · 점선 ' + BUY + ' · 오른쪽 끝 = 지금 점수'
           : '이력이 쌓이는 중 ' + monthPts.length + '일치') + '</div>' +
         '<div class="chart-box" id="gMonth"></div>' +
       '</article>';
@@ -389,27 +596,27 @@
         '<p class="note">점수는 그날까지의 자료만으로 계산했습니다(미래 자료가 섞이지 않게). 2002·2008은 이 사이트의 주별 이력(2011~) 밖이라 그래프가 아니라 위 글줄에만 적었습니다.</p>' +
       '</article>';
 
-    /* 8) 지표 추적 (접힘) */
-    var track = trackingHtml(t, values, result);
+    /* 8) 지표 기록·버블·산식 (접힘) — 입력부는 위 topPanel 하나뿐 */
+    var track = trackingHtml(t, values, result, snap);
     /* 9) 폭락 비교 (접힘) */
     var crashHtml = crashSectionHtml(detailId);
 
     view.innerHTML =
-      '<section class="hero"><div class="crumb"><a href="#/">홈</a> / 매수 지표</div>' +
+      '<section class="hero g-hero"><div class="crumb"><a href="#/">홈</a> / 매수 지표</div>' +
         '<h1>매수 지표</h1>' +
         '<p>여섯 지표를 0~100으로 환산해 가중 평균한 <b>밸류게이지</b>입니다. 높을수록 저평가·공포이고, ' + BUY + ' 이상이면 계획한 투입 구간입니다.</p>' +
       '</section>' +
+      topPanel +
       head +
-      section('input', '값 직접 입력', '가격과 VIX를 직접 넣으면 점수·막대·레이더·오늘 점이 그 값으로 다시 계산됩니다.', inputBody) +
       gaugeCard +
       statBlock +
       radarCard +
       chartsCard +
       flowCard +
-      section('track', '지표 추적', '지표 값 직접 조작·기록, 버블 체크, 무엇이 실시간인가, 매매 기준·산식. 눌러서 폅니다.', track) +
+      section('track', '지표 기록 · 버블 · 산식', '과거 점수 기록, 버블 체크, 무엇이 실시간인가, 매매 기준·산식. 눌러서 폅니다.', track) +
       section('crash', '폭락 비교', '저점 전후 1년 비교 · 여섯 사례. 눌러서 폅니다.', crashHtml, !!detailId);
 
-    bind(view, t);
+    bind(view, t, detailId);
     drawCharts(view, t, monthPts, result.score);
     if (ST.open.crash || detailId) drawOverlap(view, Data.crashes.cases);
     if (detailId) {
@@ -418,11 +625,88 @@
     }
   };
 
-  /* ------------------------------------------------------------ 지표 추적 */
+  /* ------------------------------------------------------------ 매수 지표 입력(맨 위) */
 
-  function trackingHtml(t, values, result) {
-    var T = Data.gauge.targets[t];
-    var rows = IND.map(function (spec) {
+  /* 희귀도 — 실제 주봉 점수 기록(2011~, Data.gauge.weekly)만으로 센다.
+     문턱 이상인 주를 21일 이내 연속으로 묶어 회차를 내고, 기간으로 나눠 '몇 년에 1회'를 낸다.
+     자료에 미리 적힌 stat.rarity(1995년 합성 구간이 섞인 값)는 쓰지 않는다. */
+  function rarityOf(t) {
+    var w = (Data.gauge.weekly && Data.gauge.weekly[t]) || [];
+    if (w.length < 10) return null;
+    var eps = [], cur = null;
+    w.forEach(function (p) {
+      if (p[1] === null || p[1] === undefined || p[1] < BUY) return;
+      var ms = Date.parse(p[0]);
+      if (cur && (ms - cur.endMs) / 86400000 <= 21) {
+        cur.endMs = ms; cur.end = p[0]; cur.max = Math.max(cur.max, p[1]); cur.weeks += 1;
+      } else {
+        if (cur) eps.push(cur);
+        cur = { start: p[0], end: p[0], max: p[1], weeks: 1, endMs: ms };
+      }
+    });
+    if (cur) eps.push(cur);
+    if (!eps.length) return null;
+    var span = (Date.parse(w[w.length - 1][0]) - Date.parse(w[0][0])) / 86400000 / 365.25;
+    var per = span / eps.length;
+    var perYear = eps.length / span;
+    var label = perYear >= 2 ? '자주 오는 구간' : (perYear >= 0.75 ? '1년에 한 번 수준' : (perYear >= 0.4 ? '2~3년에 한 번' : '드문 구간'));
+    var hits = w.filter(function (p) { return p[1] >= BUY; }).length;
+    return {
+      text: (per >= 0.95 ? per.toFixed(1) : per.toFixed(2)) + '년에 1회 · ' + Math.round(span) + '년간 ' + eps.length + '회',
+      label: label, perYear: perYear, yearsPer: per, episodes: eps.length,
+      weeks: w.length, hits: hits, from: w[0][0], to: w[w.length - 1][0], span: span
+    };
+  }
+
+  function rarityNoteHtml(r, t) {
+    if (!r) return '희귀도 — 주봉 점수 기록이 모자라 계산하지 못했습니다.';
+    return '희귀도 = 주봉 점수 기록 ' + F.day(r.from) + '~' + F.day(r.to) + ' ' + r.weeks + '주 중 ' + BUY +
+      '점 이상 ' + r.hits + '주를 21일 이내 연속으로 묶어 ' + r.episodes + '회. ' +
+      Math.round(r.span) + '년에 ' + r.episodes + '회 → ' + r.label + ' (1995년 합성 구간은 쓰지 않습니다).';
+  }
+
+  function sixLine(values) {
+    return IND.map(function (spec) {
+      var v = values[spec.key];
+      var x = (v === null || v === undefined) ? '—'
+        : (spec.key === 'dd' ? '-' + Number(v).toFixed(1)
+          : spec.key === 'vixr' ? Number(v).toFixed(2) + 'x'
+            : Number(v).toFixed(1));
+      return SHORT[spec.key] + ' <b>' + x + '</b>';
+    }).join(' · ');
+  }
+
+  function modeNote(snap) {
+    if (snap.manual) {
+      return '수동 — 내가 넣은 값이 우선입니다. 기준을 바꿔도 값은 그대로이고, <b>자동</b>으로 돌리면 고른 기준(확정/실시간)의 값으로 돌아옵니다.';
+    }
+    return '자동 — ' + (snap.basis === 'live'
+      ? 'data/live.json 의 실시간 값(프리마켓·애프터 포함)'
+      : '마지막 확정 종가') + '입니다. 기준을 바꾸면 여섯 값·가격·레이더가 그 기준으로 채워집니다.';
+  }
+
+  /* 매수 지표 탭 맨 위 — 지표 추적(여섯 지표 조작)이 곧 입력부다.
+     가격을 따로 넣는 칸은 두지 않는다: 실시간 모드면 live.json 값, 손댔으면 낙폭·200일선 이격 역산값. */
+  function gaugeTopHtml(snap, T, G) {
+    var t = snap.t, values = snap.values, result = snap.result;
+    var meta = liveInfo(t);
+    var open = ST.open.inds === undefined ? (w.innerWidth || 390) >= 900 : !!ST.open.inds;
+    return '<article class="panel" id="gTop">' +
+      '<div class="row" style="justify-content:space-between;align-items:center;margin-bottom:4px">' +
+        '<div class="g-sub" style="margin:0">매수 지표 입력 · 지표 추적</div>' + modeSegHtml() +
+      '</div>' +
+      '<div class="g-ctl">' + basisSegHtml(snap) + basisBadgeHtml(snap, meta) +
+        '<button class="btn ghost sm" type="button" id="gLiveRefresh">실시간 새로고침</button></div>' +
+      '<p class="g-cap" id="gModeNote">' + modeNote(snap) + '</p>' +
+      '<p class="g-six" id="gSix">' + sixLine(values) + '</p>' +
+      '<button class="btn ghost sm" type="button" id="gIndsBtn" aria-expanded="' + (open ? 'true' : 'false') + '" style="margin-top:2px">여섯 지표 직접 조작 <span class="mark">' + (open ? '접기 ▴' : '펼치기 ▾') + '</span></button>' +
+      '<div id="gInds"' + (open ? '' : ' hidden') + '>' + indsHtml(values) + indsTableHtml(result) + '</div>' +
+      '<p class="note">슬라이더·숫자로 값을 바꾸면 점수·막대·판정·레이더·오늘 선이 같은 값으로 바로 따라오고, 낙폭·200일선 이격은 위 가격을 거꾸로 다시 계산합니다. RSI·VIX는 과거 시계열이 필요해 가격으로 되돌릴 수 없습니다.</p>' +
+    '</article>';
+  }
+
+  function indsHtml(values) {
+    return IND.map(function (spec) {
       var v = values[spec.key];
       var steps = Math.round((spec.max - spec.min) / spec.step);
       var prog = v === null || v === undefined ? 0 : Math.round((v - spec.min) / spec.step);
@@ -438,16 +722,23 @@
             '<div class="ends"><span>' + fmtEnd(spec, spec.min) + '</span><span>' + fmtEnd(spec, spec.max) + '</span></div>') +
       '</div>';
     }).join('');
+  }
 
-    var table = '<div class="tbl-wrap" style="margin-top:10px"><table class="tbl"><thead><tr><th>지표</th><th>값</th><th>환산</th><th>기여</th></tr></thead><tbody>' +
+  function indsTableHtml(result) {
+    return '<div class="tbl-wrap" style="margin-top:10px"><table class="tbl"><thead><tr><th>지표</th><th>값</th><th>환산</th><th>기여</th></tr></thead><tbody id="gTrackTable">' +
       result.rows.map(function (r) {
         return '<tr><td>' + esc(r.name) + '</td><td class="mono">' + (r.value === null ? '—' : fmtVal(r.key, r.value) + esc(r.unit || '')) +
           '</td><td class="mono">' + (r.converted === null ? '—' : F.num(r.converted)) +
           '</td><td class="mono">' + (r.contribution === null ? '—' : F.signed(r.contribution, 1)) + '</td></tr>';
       }).join('') +
-'' + '</tbody></table></div>' +
-      '<p class="note">값이 없는 지표는 빼고 남은 가중치 합(' + F.fixed(result.weightSum, 2) + ')으로 나눕니다. 기여도 합 ÷ 가중치 합 = ' + F.num(result.score) + '점.</p>';
+      '</tbody></table></div>' +
+      '<p class="note" id="gTrackSum">값이 없는 지표는 빼고 남은 가중치 합(' + F.fixed(result.weightSum, 2) + ')으로 나눕니다. 기여도 합 ÷ 가중치 합 = ' + F.num(result.score) + '점.</p>';
+  }
 
+  /* ------------------------------------------------------------ 지표 기록 · 버블 · 산식 */
+
+  function trackingHtml(t, values, result, snap) {
+    var T = Data.gauge.targets[t];
     var records = S.get('gaugeTrack', []);
     var mine = records.filter(function (r) { return r.target === t; });
     var last5 = mine.slice(-5);
@@ -490,12 +781,17 @@
           '값이 없는 칸은 원본 자료에 그 값이 없는 것입니다(지어내지 않습니다).</p>' +
       '</article>';
 
+    var meta = liveInfo(t);
+    var info = priceInfo(snap);
+    var nowWhat = snap.manual ? '내가 넣은 여섯 값(수동)'
+      : (snap.basis === 'live' ? '실시간(추정) 값 · ' + (etPart(meta) || '시각 없음') : '확정 종가 값 · ' + F.day(snap.L.as_of));
     var prov =
       '<article class="panel">' +
         '<div class="g-sub" style="margin:0">무엇이 실시간이고 무엇이 종가인가</div>' +
-        '<p class="note" style="margin-top:6px">확정(종가) = 마지막 정규장 봉. 실시간(추정) = 확정 일봉에 지금 값을 얹어 같은 식으로 다시 계산한 값. ' +
-          '이 사이트는 정적 배포라 실시간 시세가 없습니다 — 위 점수는 <b>' + (ST.mode === 'manual' ? '직접 입력한 값' : '마지막 확정 봉(' + F.day(Data.gauge.as_of) + ') 종가') + '</b>입니다.</p>' +
-        '<div class="tbl-wrap" style="margin-top:8px"><table class="tbl"><thead><tr><th>값</th><th>확정(종가)</th><th>출처</th></tr></thead><tbody>' +
+        '<p class="note" style="margin-top:6px">확정(종가) = 마지막 정규장 봉. 실시간(추정) = data/live.json 의 지금 값(프리마켓·애프터 포함)을 진행 중인 봉으로 얹어 같은 식으로 다시 계산한 값.</p>' +
+        '<p class="note" style="margin-top:4px">생성 배포지만 GitHub Actions 가 5분마다 data/live.json 을 다시 만듭니다(마지막 갱신 ' + esc(meta && meta.updatedAtKst || '—') + ' KST). 이 화면의 점수·가격·레이더는 <b>' + esc(nowWhat) + '</b>입니다.</p>' +
+        '<div class="tbl-wrap" style="margin-top:8px"><table class="tbl"><thead><tr><th>값</th><th>값</th><th>출처</th></tr></thead><tbody>' +
+          '<tr><td>지금 화면 가격</td><td class="mono">$' + F.fixed(info.price, 2) + '</td><td>' + esc(info.tag) + '</td></tr>' +
           '<tr><td>' + esc(T.symbol) + ' 종가</td><td class="mono">' + F.fixed(T.detail.close, 2) + '</td><td>일봉 종가</td></tr>' +
           '<tr><td>5년 최고 종가</td><td class="mono">' + F.fixed(T.detail.peak, 2) + '</td><td>' + F.day(T.detail.peak_date) + '</td></tr>' +
           '<tr><td>200일선</td><td class="mono">' + F.fixed(T.detail.ma200, 2) + '</td><td>200거래일 평균</td></tr>' +
@@ -545,16 +841,7 @@
       '</article>';
 
     return '<article class="panel">' +
-        '<div class="row" style="justify-content:space-between;margin-bottom:4px"><div class="g-sub" style="margin:0">지표 값 · 직접 조작</div>' +
-          '<span class="g-seg"><button type="button" data-mode="auto" class="' + (ST.mode === 'auto' ? 'on' : '') + '">자동</button>' +
-          '<button type="button" data-mode="manual" class="' + (ST.mode === 'manual' ? 'on' : '') + '">수동</button></span></div>' +
-        '<p class="g-cap">' + (ST.mode === 'manual'
-          ? '값을 고치면 위 점수·게이지·레이더가 바로 바뀌고, 고친 값은 이 브라우저에 저장됩니다.'
-          : '자동 값(마지막 확정 봉)입니다. 슬라이더를 움직이면 위 점수가 바로 바뀝니다. 저장하려면 수동을 누르세요.') + '</p>' +
-        rows + table +
-      '</article>' +
-      '<article class="panel">' +
-        '<div class="g-sub" style="margin:0">지표 추적</div>' +
+        '<div class="g-sub" style="margin:0">지표 추적 기록</div>' +
         '<p class="g-cap">이 화면을 열 때마다 그 시각의 점수를 이 브라우저에 남깁니다(최근 60개).</p>' +
         trackList +
         (last5.length > 1 ? '<p class="note">최근 ' + last5.length + '회 점수  ' + last5.map(function (r) { return F.num(r.score); }).join('  ') + '</p>' : '') +
@@ -574,49 +861,76 @@
    * 세 보기 — 저점=100·로그(기본) / 고점=100·로그 / 낙폭%.
    * 오늘 선은 live.json → 없으면 확정 종가 → 수동 입력 순으로 정해지고, 기준을 화면에 적는다.
    */
-  var OV = { scale: 'trough' };
-  var OV_OFF = null;
+  var OV = { scale: 'date', win: 1 };
+  var OV_OFF = [];   /* 칩은 처음엔 전부 켜진다 — 끄기는 이 화면에서만(저장하지 않음) */
 
   function ovCasePath(c, scale) {
     var src;
     if (scale === 'trough') src = c.troughPath || [];
     else if (scale === 'peak') src = (c.prePath || []).concat(c.path || []);
     else src = (c.prePath || []).concat(c.path || []);
+    var lim = 252 * (OV.win || 1);
     return src.map(function (p) {
       var v;
       if (scale === 'pct') v = p[1];
       else v = 100 * (1 + p[1] / 100);
       return [p[0], v];
-    }).filter(function (p) { return p[0] >= -252 && p[0] <= 252 && (scale === 'pct' || p[1] > 0); });
+    }).filter(function (p) { return p[0] >= -lim && p[0] <= lim && (scale === 'pct' || p[1] > 0); });
   }
 
-  /* 오늘 경로 — ^NDX 일봉에서 고점 이후 하루씩. live/수동 값이 있으면 끝점을 그 값에 맞춘다. */
+  /* 오늘 경로 — ^NDX 일봉에서 고점 이후 하루씩. live/수동 값이 있으면 끝점을 그 값에 맞춘다.
+     확정 구간은 scores.index 끝(마지막 확정일)까지, 실시간·수동이면 오늘 점을 하나 더 붙여
+     선이 오늘까지 이어진다. */
   function ovToday() {
     var now = Data.now();
     var idx = Data.scores.index || [];
-    var rows = [];
+    var rows = [], dates = [];
     var seen = false;
     (idx || []).forEach(function (r) {
       if (!seen && r[0] >= now.peak_date) seen = true;
-      if (seen) rows.push({ x: rows.length, dd: r[2] });
+      if (seen) { rows.push({ x: rows.length, dd: r[2] }); dates.push(r[0]); }
     });
     if (!rows.length) return null;
+    var lastConfirmed = dates[dates.length - 1];
 
     var ddNow = now.dd, src = 'close';
     var label = '확정 종가 · ' + F.day(now.as_of);
-    if (typeof ST !== 'undefined' && ST.mode === 'manual') {
-      var v = liveValues(ST.target);
-      if (v && v.dd !== null && v.dd !== undefined) { ddNow = -Math.abs(v.dd); src = 'manual'; label = '직접 입력한 값'; }
+    /* 지표 추적에서 손댄 값이 있으면 그 여섯 값이 기준 — 오늘 선도 같은 낙폭에서 끝난다 */
+    if (typeof ST !== 'undefined' && (ST.mode === 'manual' || ST.edited)) {
+      var v = valuesRef(ST.target);
+      if (v && v.dd !== null && v.dd !== undefined) { ddNow = -Math.abs(v.dd); src = ST.mode === 'manual' ? 'manual' : 'edited'; label = (ST.mode === 'manual' ? '직접 입력한 값' : '지표에서 역산한 값'); }
     } else if (w.Basis && Basis.get() === 'live') {
+      var lv = Basis.liveFor ? Basis.liveFor(ST.target) : null;
+      if (lv && lv.values && lv.values.dd !== null && lv.values.dd !== undefined) {
+        ddNow = -Math.abs(lv.values.dd);
+        src = 'live';
+        label = '실시간(추정) · ' + (etPart(liveInfo(ST.target)) || '시각 없음');
+      } else {
       var q = Basis.quote('^NDX') || Basis.quote('NDX');
       if (q && now.peak_close > 0) {
         ddNow = (q.price / now.peak_close - 1) * 100;
         src = 'live';
         label = '실시간(추정) · ' + (q.session ? q.session + ' ' : '') + (q.hhmm || '');
       }
+      }
     }
     var lastDd = rows[rows.length - 1].dd;
     var ratio = (lastDd > -100) ? (1 + ddNow / 100) / (1 + lastDd / 100) : 1;
+
+    /* 실시간·수동·손댐이면 오늘 점을 하나 더 붙여 선을 오늘까지 이어 준다(확정 모드는 확정 종가까지) */
+    var extended = (src !== 'close');
+    var todayIso = null;
+    if (extended) {
+      var meta = liveInfo(ST.target);
+      todayIso = (meta && meta.barLive) || F.today();
+      if (todayIso !== lastConfirmed) {
+        rows.push({ x: rows.length, dd: ddNow, live: true });
+        dates.push(todayIso);
+      } else {
+        todayIso = lastConfirmed;
+        rows[rows.length - 1].dd = ddNow;   /* 같은 날이면 그 날 값을 지금 값으로 */
+      }
+    }
 
     var t = 0, best = 1e9;
     rows.forEach(function (r) { if (r.dd < best) { best = r.dd; t = r.x; } });
@@ -629,16 +943,24 @@
         return [r.x - t, ((1 + r.dd / 100) * ratio / troughBase - 1) * 100];
       }),
       offset: rows[rows.length - 1].x,
-      troughOffset: rows[rows.length - 1].x - t
+      troughOffset: rows[rows.length - 1].x - t,
+      firstDate: dates[0], lastDate: dates[dates.length - 1], lastConfirmed: lastConfirmed,
+      liveDate: extended ? todayIso : null, n: rows.length
     };
   }
 
-  function ovScaleLabel(s) { return s === 'trough' ? '저점=100 · 로그' : (s === 'peak' ? '고점=100 · 로그' : '낙폭 %'); }
+  function ovScaleLabel(s) {
+    return s === 'trough' ? '저점=100 · 로그'
+      : (s === 'peak' ? '고점=100 · 로그' : (s === 'date' ? '날짜' : '낙폭 %'));
+  }
+
+  var OV_SCALES = ['trough', 'peak', 'pct', 'date'];
 
   function overlapCard(cases) {
-    if (OV_OFF === null) OV_OFF = S.get('crashOff', []);
     var saved = S.get('crashOv', null);
-    if (saved === 'trough' || saved === 'peak' || saved === 'pct') OV.scale = saved;
+    if (OV_SCALES.indexOf(saved) >= 0) OV.scale = saved;
+    var savedWin = Number(S.get('crashWin', 1));
+    OV.win = (savedWin === 2 || savedWin === 3) ? savedWin : 1;
     var chips = cases.map(function (c) {
       var on = OV_OFF.indexOf(c.id) < 0;
       return '<button class="chip ' + (on ? 'on' : '') + '" type="button" data-ovcase="' + c.id + '">' +
@@ -646,14 +968,18 @@
     }).join('');
     return '<article class="panel">' +
       '<div class="row" style="justify-content:space-between;align-items:center">' +
-        '<div class="g-sub" style="margin:0">일곱 시점 겹쳐 보기</div>' +
+        '<div class="g-sub" style="margin:0">' + cases.length + '개 시점 겹쳐 보기</div>' +
         '<span class="g-seg" id="ovScale">' +
-          ['trough', 'peak', 'pct'].map(function (s) {
+          OV_SCALES.map(function (s) {
             return '<button type="button" data-ovscale="' + s + '" class="' + (OV.scale === s ? 'on' : '') + '">' + ovScaleLabel(s) + '</button>';
           }).join('') +
         '</span>' +
       '</div>' +
       '<div class="pill-row" id="ovChips" style="margin:8px 0 2px">' + chips + '</div>' +
+      '<div class="g-win"><div class="row" style="justify-content:space-between"><span class="g-cap" style="margin:0">저점 기준 보이는 기간 <b id="ovWinLab">' + OV.win + '년</b></span>' +
+        '<span class="g-cap" style="margin:0">1년 · 2년 · 3년</span></div>' +
+        '<input type="range" id="ovWin" min="1" max="3" step="1" value="' + OV.win + '" aria-label="저점 기준 보이는 기간(년)"></div>' +
+      '<p class="note" style="margin:0 0 4px">여섯 사례는 처음에 모두 켜져 있습니다. 끄기는 이 화면에서만 유지되고 저장되지는 않습니다.</p>' +
       '<div class="chart-box" id="ovChart" style="touch-action:pan-y"></div>' +
       '<p class="note" id="ovReadout"></p>' +
       '<p class="note" id="ovCaption"></p>' +
@@ -663,23 +989,196 @@
 
   function ovCaptionText(scale) {
     if (scale === 'trough') {
-      return '각 사례의 **저점 = 100**, 세로는 로그 눈금. 저점 0일 기준 −252~+252거래일이라 일곱 선이 저점에서 만납니다. ' +
+      return '각 사례의 **저점 = 100**, 세로는 로그 눈금. 저점 0일 기준 −1~±3년(슬라이더) 구간이라 선이 저점에서 만납니다. ' +
         '오늘 선은 지금까지의 잠정 저점을 100으로 두고 같은 방식으로 옮겼습니다(최종 저점이 아니라 잠정값).';
     }
     if (scale === 'peak') {
       return '각 사례의 **고점 = 100**, 세로는 로그 눈금. 고점 0일 기준 −252~+252거래일.';
     }
-    return '같은 구간을 **낙폭 %** 선형 눈금으로. 로그 보기와 달리 깊은 낙폭이 더 크게 보입니다.';
+    if (scale === 'date') {
+      return '각 사례를 **실제 날짜** 위치에 놓고 세로는 낙폭 %로. 1929·1987·2000·2008·2020·2025가 시간 순서로 어디에 앉는지 보입니다. ' +
+        '가로 위치는 고점 날짜에 거래일(주말 제외)을 더해 잡은 근사값입니다 — 고점·저점 날짜는 자료 그대로입니다.';
+    }
+    return '같은 구간을 **낙폭 %** 선형 눈금으로. 로그 보기와 달라 깊은 낙폭이 더 크게 보입니다.';
+  }
+
+  /* ------------------------------------------------------------ 날짜 축 보기
+   * 자료에는 각 점의 날짜가 없다(고점 기준 거래일 오프셋만 있다). 그래서 고점 날짜에
+   * 거래일(주말 제외)을 더해 날짜를 잡는다. 고점·저점 날짜 자체는 자료값 그대로다.
+   * 없는 값을 지어내지 않기 위해, 근사임을 화면 각주에 적는다. */
+  function addTradingDays(iso, n) {
+    var d = new Date(iso + 'T00:00:00Z');
+    if (isNaN(d.getTime())) return null;
+    var step = n >= 0 ? 1 : -1, left = Math.abs(n);
+    while (left > 0) {
+      d.setUTCDate(d.getUTCDate() + step);
+      var wd = d.getUTCDay();
+      if (wd !== 0 && wd !== 6) left--;
+    }
+    return d.getTime();
+  }
+
+  function ovDateSeries(c) {
+    var pts = [];
+    var lim = 252 * (OV.win || 1);          /* 고점 기준 ±창(1~3년)만 그린다(자료가 고점 ±1년까지) */
+    (c.prePath || []).concat(c.path || []).forEach(function (p) {
+      if (p[0] < -lim || p[0] > lim) return;
+      var ms = addTradingDays(c.peak, p[0]);
+      if (ms !== null && p[1] !== null) pts.push([ms, p[1]]);
+    });
+    return pts;
+  }
+
+  function ovDateToday(tSnap) {
+    var meta = liveInfo(tSnap.t);
+    var live = ST.mode === 'manual' || ST.edited || (w.Basis && Basis.get() === 'live');
+    /* 확정 모드면 확정 종가 날짜, 실시간·수동이면 지금 날짜 — 라벨과 값이 같은 쪽에서 나온다 */
+    var iso = live ? ((meta && meta.barLive) || F.today()) : (tSnap.L.as_of || F.today());
+    var ms = Date.parse(String(iso) + 'T00:00:00Z');
+    var dd = -Math.abs(tSnap.values && tSnap.values.dd !== null && tSnap.values.dd !== undefined
+      ? tSnap.values.dd : Data.now().dd);
+    var lab = ST.mode === 'manual' ? '직접 입력' : (ST.edited ? '지표에서 역산' : (live ? '지금(' + ((meta && meta.sessionLabel) || '장중') + ')' : '확정 종가'));
+    return { ms: ms, dd: dd, iso: String(iso), label: lab + ' ' + String(iso) };
+  }
+
+  function ovDateReadout(ms, series, today) {
+    function nearest(pts) {
+      var best = null;
+      pts.forEach(function (p) {
+        var gap = Math.abs(p[0] - ms);
+        if (gap <= 12 * 86400000 && (!best || gap < best.gap)) best = { v: p[1], gap: gap };
+      });
+      return best ? best.v : null;
+    }
+    var parts = [];
+    series.forEach(function (se) {
+      var v = nearest(se.pts);
+      if (v !== null) parts.push({ k: se.short, v: v, c: se.color });
+    });
+    var iso = new Date(ms).toISOString().slice(0, 10);
+    if (!parts.length) return iso + ' — 이 날짜에 그린 사례가 없습니다.';
+    parts.sort(function (a, b) { return a.v - b.v; });
+    var txt = iso + ' — ' + parts.map(function (p) {
+      return '<span style="color:' + p.c + '">' + esc(p.k) + '</span> ' + F.pct(p.v, 1);
+    }).join(' · ');
+    if (parts.length >= 2) {
+      txt += ' · 격차 ' + F.pct(parts[0].v - parts[parts.length - 1].v, 1).replace('+', '') +
+        'p (' + esc(parts[0].k) + ' ' + F.pct(parts[0].v, 1) + ' ↔ ' + esc(parts[parts.length - 1].k) + ' ' + F.pct(parts[parts.length - 1].v, 1) + ')';
+    }
+    return txt + (today && Math.abs(today.ms - ms) < 12 * 86400000 ? ' · 오늘 ' + F.pct(today.dd, 1) : '');
+  }
+
+  /* 날짜 축의 오늘 선 — 사례들과 같은 방식(낙폭 % 선, 날짜 x)으로 그린다. */
+  function ovTodayDatePts() {
+    var now = Data.now(), idx = Data.scores.index || [];
+    var pts = [], seen = false;
+    idx.forEach(function (r) {
+      if (!seen && r[0] >= now.peak_date) seen = true;
+      if (seen) {
+        var ms = Date.parse(r[0] + 'T00:00:00Z');
+        if (!isNaN(ms) && r[2] !== null) pts.push([ms, r[2]]);
+      }
+    });
+    if (!pts.length) return [];
+    var snap = snapshot(ST.target);
+    var meta = liveInfo(ST.target);
+    var live = ST.mode === 'manual' || ST.edited || (w.Basis && Basis.get() === 'live');
+    if (live) {
+      var iso = (meta && meta.barLive) || F.today();
+      var ms2 = Date.parse(iso + 'T00:00:00Z');
+      var dd = -Math.abs(snap.values && snap.values.dd !== null && snap.values.dd !== undefined
+        ? snap.values.dd : now.dd);
+      if (!isNaN(ms2)) pts.push([ms2, dd]);
+    }
+    return pts;
+  }
+
+  function drawDateOverlap(view, cases) {
+    var host = el('#ovChart', view);
+    if (!host) return;
+    var tSnap = snapshot(ST.target);
+    var today = ovDateToday(tSnap);
+    var on = cases.filter(function (c) { return OV_OFF.indexOf(c.id) < 0; });
+    var series = on.map(function (c) {
+      return { id: c.id, short: c.short, color: c.color, pts: ovDateSeries(c) };
+    }).filter(function (s) { return s.pts.length > 1; });
+    var tpts = ovTodayDatePts();
+    if (tpts.length > 1) series.push({ id: 'today', short: '오늘', color: '#5b8fe8', pts: tpts, isToday: true });
+    var all = [];
+    series.forEach(function (s) { all = all.concat(s.pts); });
+    all.push([today.ms, today.dd]);
+    if (!all.length) { host.innerHTML = '<div class="empty">그릴 값이 없습니다.</div>'; return; }
+    var xs = all.map(function (p) { return p[0]; });
+    var ys = all.map(function (p) { return p[1]; });
+    var x0 = Math.min.apply(null, xs), x1 = Math.max.apply(null, xs.concat([today.ms]));
+    var yLo = Math.min.apply(null, ys), yHi = Math.max.apply(null, ys.concat([0]));
+    yLo = Math.floor(yLo / 10) * 10; yHi = Math.ceil(yHi / 10) * 10;
+    if (yHi === yLo) yHi = yLo + 10;
+
+    var W = 760, H = 330, pad = { l: 48, r: 20, t: 16, b: 30 };
+    var iw = W - pad.l - pad.r, ih = H - pad.t - pad.b;
+    var sx = function (ms) { return pad.l + (ms - x0) / (x1 - x0) * iw; };
+    var sy = function (v) { return pad.t + ih - (v - yLo) / (yHi - yLo) * ih; };
+
+    var s = ['<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="폭락 사례 날짜 축 — ' + series.length + '개 사례, 세로 낙폭 퍼센트">'];
+    /* 연 단위 세로 눈금 — 좁은 화면은 10년 간격 */
+    var spanY = (x1 - x0) / 31557600000;
+    var step = (w.innerWidth || 390) < 600 ? (spanY > 40 ? 10 : 5) : (spanY > 40 ? 10 : (spanY > 18 ? 5 : 2));
+    var y = new Date(x0).getUTCFullYear();
+    if (y % step !== 0) y -= y % step;
+    for (; y <= new Date(x1).getUTCFullYear(); y += step) {
+      var ms = Date.UTC(y, 0, 1);
+      if (ms < x0 || ms > x1) continue;
+      var x = sx(ms);
+      s.push('<line x1="' + x.toFixed(1) + '" y1="' + pad.t + '" x2="' + x.toFixed(1) + '" y2="' + (pad.t + ih) + '" stroke="var(--line)" stroke-width="1" stroke-dasharray="2 4"/>');
+      s.push('<text x="' + x.toFixed(1) + '" y="' + (H - 10) + '" text-anchor="middle" font-size="10" fill="var(--dim)">' + y + '</text>');
+    }
+    /* 가로 눈금 — 낙폭 % */
+    [0, -20, -40, -60, -80, -100].forEach(function (v) {
+      if (v < yLo - 0.001 || v > yHi + 0.001) return;
+      s.push('<line x1="' + pad.l + '" y1="' + sy(v).toFixed(1) + '" x2="' + (W - pad.r) + '" y2="' + sy(v).toFixed(1) + '" stroke="var(--line)" stroke-width="1"' + (v === 0 ? '' : ' stroke-dasharray="2 4"') + '/>');
+      s.push('<text x="' + (pad.l - 6) + '" y="' + (sy(v) + 3.2).toFixed(1) + '" text-anchor="end" font-size="10" fill="var(--dim)">' + v + '%</text>');
+    });
+
+    series.forEach(function (se) {
+      var d = se.pts.map(function (p, i) { return (i ? 'L' : 'M') + sx(p[0]).toFixed(1) + ' ' + sy(p[1]).toFixed(1); }).join('');
+      if (d) s.push('<path d="' + d + '" fill="none" stroke="' + se.color + '" stroke-width="' + (se.isToday ? 2.6 : 1.5) + '" stroke-opacity="0.9" stroke-linejoin="round"/>');
+      var lastP = se.pts[se.pts.length - 1];
+      s.push('<text x="' + (sx(lastP[0]) + 4).toFixed(1) + '" y="' + (sy(lastP[1]) - 6).toFixed(1) + '" font-size="10" fill="' + se.color + '">' + esc(se.short) + '</text>');
+    });
+    /* 오늘 */
+    var tx = sx(today.ms);
+    s.push('<line x1="' + tx.toFixed(1) + '" y1="' + pad.t + '" x2="' + tx.toFixed(1) + '" y2="' + (pad.t + ih) + '" stroke="var(--blue)" stroke-width="1.2" stroke-dasharray="4 3"/>');
+    s.push('<circle cx="' + tx.toFixed(1) + '" cy="' + sy(today.dd).toFixed(1) + '" r="4" fill="var(--blue)"/>');
+    s.push('<text x="' + (tx + 5).toFixed(1) + '" y="' + (sy(today.dd) - 7).toFixed(1) + '" font-size="10.5" fill="var(--blue)">오늘 ' + F.pct(today.dd, 1) + '</text>');
+    s.push('</svg>');
+    host.innerHTML = s.join('');
+    host.__ov = { kind: 'date', series: series, today: today, sx: sx, x0: x0, x1: x1, pad: pad, W: W };
+
+    var readout = el('#ovReadout', view);
+    if (readout) readout.innerHTML = ovDateReadout(today.ms, series, today);
+    var cap = el('#ovCaption', view);
+    if (cap) cap.innerHTML = ovCaptionText('date').replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
+    var basis = el('#ovBasis', view);
+    if (basis) {
+      var tSnap2 = snapshot(ST.target);
+      var offNow = tSnap2.L ? (Date.parse(String(today.iso) + 'T00:00:00Z') - Date.parse('2026-01-01T00:00:00Z')) / 86400000 : null;
+      basis.textContent = '오늘 기준 — ' + today.label + ' 낙폭 ' + F.pct(today.dd, 1) +
+        ' · 창 = 저점 기준 ±' + OV.win + '년(자료는 고점 ±1년까지) · 세로는 낙폭 % · 가로 위치는 고점 + 거래일 근사';
+    }
   }
 
   function drawOverlap(view, cases) {
     var host = el('#ovChart', view);
     if (!host) return;
     var scale = OV.scale;
+    if (scale === 'date') { drawDateOverlap(view, cases); return; }
     var today = ovToday();
     var on = cases.filter(function (c) { return OV_OFF.indexOf(c.id) < 0; });
     var series = on.map(function (c) { return { id: c.id, short: c.short, color: c.color, pts: ovCasePath(c, scale) }; });
     var todayPts = today ? (scale === 'trough' ? today.trough : today.peak) : [];
+    var lim2 = 252 * (OV.win || 1);
+    todayPts = todayPts.filter(function (p) { return p[0] >= -lim2 && p[0] <= lim2; });
     if (scale === 'trough' && today) {
       todayPts = today.trough.map(function (p) { return [p[0], 100 * (1 + p[1] / 100)]; });
     } else if (today) {
@@ -700,14 +1199,15 @@
       var loL = lo, hiL = hi;
     }
     if (hiL === loL) hiL = loL + 1;
-    var xMin = -252, xMax = 252;
+    var lim = 252 * (OV.win || 1);
+    var xMin = -lim, xMax = lim;
     var iw = W - pad.l - pad.r, ih = H - pad.t - pad.b;
     var sx = function (x) { return pad.l + (x - xMin) / (xMax - xMin) * iw; };
     var sy = function (v) { return pad.t + ih - (yOf(v) - loL) / (hiL - loL) * ih; };
 
     var s = ['<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="폭락 사례 겹쳐 보기 — ' + ovScaleLabel(scale) + '">'];
     /* 가로 눈금 — 저점/고점 기준일과 ±1년 */
-    [[-252, '−252'], [-126, '−126'], [0, '0'], [126, '+126'], [252, '+252']].forEach(function (t) {
+    [[-lim, '−' + OV.win + '년'], [-Math.round(lim / 2), '−' + (OV.win / 2) + '년'], [0, '0'], [Math.round(lim / 2), '+' + (OV.win / 2) + '년'], [lim, '+' + OV.win + '년']].forEach(function (t) {
       var x = sx(t[0]);
       s.push('<line x1="' + x.toFixed(1) + '" y1="' + pad.t + '" x2="' + x.toFixed(1) + '" y2="' + (pad.t + ih) + '" stroke="var(--line)" stroke-width="1" stroke-dasharray="2 4"/>');
       s.push('<text x="' + x.toFixed(1) + '" y="' + (H - 9) + '" text-anchor="middle" font-size="10.5" fill="var(--dim)">' + t[1] + '</text>');
@@ -764,7 +1264,10 @@
     el('#ovReadout', view).innerHTML = ovReadoutText(day, scale, today, series, view);
     el('#ovCaption', view).innerHTML = ovCaptionText(scale).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
     el('#ovBasis', view).textContent = '오늘 기준 — ' + (today ? today.label : '값 없음(오늘 선을 그리지 않았습니다)') +
-      ' · ' + (OV.scale === 'trough' ? '저점' : '고점') + ' 기준 +' + (day === null ? '—' : day) + '거래일';
+      ' · ' + (OV.scale === 'trough' ? '저점' : '고점') + ' 기준 +' + (day === null ? '—' : day) + '거래일' +
+      (today ? ' · 오늘 선 ' + F.day(today.firstDate) + '~' + F.day(today.lastDate) + ' 낙폭 ' + F.pct(today.dd, 1) +
+        (today.liveDate ? ' (지금 점까지)' : ' (확정 종가까지)') : '') +
+      (day !== null && day > 252 ? ' · 오늘 구간이 축(+252거래일)을 넘어 끝점이 잘렸습니다' : '');
   }
 
   function ovValueAt(pts, day, scale) {
@@ -793,9 +1296,14 @@
       parts.push({ k: se.short, v: ovValueAt(se.pts, day, scale), c: se.color });
     });
     var vals = parts.filter(function (p) { return p.v !== null; }).sort(function (a, b) { return a.v - b.v; });
-    return head + vals.map(function (p) {
+    var out = head + vals.map(function (p) {
       return scale === 'pct' ? p.k + ' ' + F.pct(p.v, 1) : p.k + ' ' + F.fixed(100 + p.v, 1);
     }).join(' · ');
+    if (vals.length >= 2) {
+      out += ' · 격차 ' + F.pct(vals[vals.length - 1].v - vals[0].v, 1).replace('+', '') + 'p (' +
+        esc(vals[vals.length - 1].k) + ' ↔ ' + esc(vals[0].k) + ')';
+    }
+    return out;
   }
 
   /* ------------------------------------------------------------ 폭락 비교(원본 접힌 섹션) */
@@ -952,7 +1460,8 @@
         yTicks: [Math.round(lo), BUY, Math.round(hi)].filter(function (v, i2, arr) { return arr.indexOf(v) === i2; }).sort(function (a, b) { return a - b; }),
         xTicks: [{ x: 0, label: F.day(monthPts[0][0]).slice(5) }, { x: monthPts.length - 1, label: F.day(monthPts[monthPts.length - 1][0]).slice(5) }],
         hlines: [{ y: BUY, color: '#3f8168', label: String(BUY), dash: '4 4' }],
-        markers: [{ x: monthPts.length - 1, y: monthPts[monthPts.length - 1][1], color: '#43b795', r: 3 }]
+        markers: [{ x: monthPts.length - 1, y: monthPts[monthPts.length - 1][1], color: '#43b795', r: 3.5,
+          label: '지금 ' + F.num(monthPts[monthPts.length - 1][1]), anchor: 'end' }]
       });
     } else if (host) {
       host.innerHTML = '<div class="empty">이력이 쌓이는 중입니다.</div>';
@@ -1032,14 +1541,21 @@
 
   /* ------------------------------------------------------------ 실시간 갱신(점수·막대·레이더) */
 
+  /* 한 벌(snapshot)에서 점수·막대·판정·레이더·가격·표를 같은 순간에 다시 그린다.
+     슬라이더를 움직이면 이 함수 하나만 돌므로 일부만 갱신되는 일이 없다. */
   function updateLive(view, t) {
-    var values = liveValues(t);
-    var result = scoreOf(values, t);
-    /* 자동·무편집이면 자료의 점수를 그대로 쓴다(반올림 경계에서 홈과 0.1 어긋나지 않게) */
-    var shown = (ST.mode === 'auto' && !ST.edited && L.score !== undefined && L.score !== null) ? L.score : result.score;
-    result = { raw: result.raw, score: shown, rows: result.rows, weightSum: result.weightSum, sum: result.sum };
-    var v = verdictOf(result.score);
-    var axes = axesOf(values, t);
+    var snap = snapshot(t);
+    var values = snap.values, result = snap.result, v = snap.verdict, axes = snap.axes;
+    var meta = liveInfo(t);
+    var info = priceInfo(snap);
+
+    var priceEl = el('#gPrice', view); if (priceEl) priceEl.textContent = '$' + F.fixed(info.price, 2);
+    var ptag = el('#gPriceTag', view);
+    if (ptag) { ptag.textContent = info.tag; ptag.className = 'badge ' + info.badgeCls; }
+    var pnote = el('#gPriceNote', view); if (pnote) pnote.innerHTML = priceNoteHtml(snap, info);
+    var duo = el('#gDuo', view); if (duo) duo.innerHTML = duoHtml(snap, meta);
+    var six = el('#gSix', view); if (six) six.innerHTML = sixLine(values);
+    var mnote = el('#gModeNote', view); if (mnote) mnote.innerHTML = modeNote(snap);
 
     var scoreEl = el('#gScore', view); if (scoreEl) scoreEl.textContent = trim1(result.score);
     var badge = el('#gBadge', view);
@@ -1069,11 +1585,23 @@
           '</td><td class="mono">' + (r.contribution === null ? '—' : F.signed(r.contribution, 1)) + '</td></tr>';
       }).join('');
     }
+    var sum = el('#gTrackSum', view);
+    if (sum) sum.textContent = '값이 없는 지표는 빼고 남은 가중치 합(' + F.fixed(result.weightSum, 2) +
+      ')으로 나눕니다. 기여도 합 ÷ 가중치 합 = ' + F.num(result.score) + '점.';
+
+    /* 최근 한 달 일봉의 지금 점·점수 선도 같은 값에서 다시 그린다 */
+    var barsHost = el('#gBars', view);
+    if (barsHost) {
+      var bars = monthBars(t), ld = meta && meta.barLive ? meta.barLive : null;
+      barsHost.innerHTML = candleSvg(bars, ld, info.price, info.tag);
+      var bsum = el('#gBarsSum', view);
+      if (bsum) bsum.textContent = barSummary(bars, ld);
+    }
+    if (el('#gMonth', view)) drawCharts(view, t, monthScorePts(t, snap), result.score);
   }
 
   function recordNow(t) {
-    var values = liveValues(t);
-    var result = scoreOf(values, t);
+    var result = snapshot(t).result;
     var now = new Date();
     var pad = function (n) { return (n < 10 ? '0' : '') + n; };
     var at = F.day(F.today()) + ' ' + pad(now.getHours()) + ':' + pad(now.getMinutes());
@@ -1087,7 +1615,29 @@
 
   /* ------------------------------------------------------------ 이벤트 */
 
-  function bind(view, t) {
+  /* 5분 갱신(live.js)이 새 live.json 을 받으면 이 화면도 다시 그린다 — 새 타이머를 만들지 않는다 */
+  var NO_RECORD = false;
+  document.addEventListener('stockrebal:live', function () {
+    dropValues();
+    if (location.hash.indexOf('#/gauge') !== 0) return;
+    var v = liveView();
+    if (!v || !v.querySelector('#gTop')) return;
+    var ae = document.activeElement;
+    if (ae && v.contains(ae) && /^(INPUT|SELECT|TEXTAREA)$/.test(ae.tagName)) return; /* 입력 중엔 손대지 않는다 */
+    var m = location.hash.match(/^#\/gauge\/crash\/([\w-]+)/);
+    NO_RECORD = true;
+    rerender(v, m ? m[1] : null);
+    NO_RECORD = false;
+  });
+
+  /* 화면 다시 그리기 — 스크롤 위치를 지키고, 상세(폭락 사례) 경로도 유지한다 */
+  function rerender(view, detailId) {
+    var y = (w.pageYOffset || 0);
+    V.gauge(view, detailId || null);
+    if (y) w.scrollTo(0, y);
+  }
+
+  function bind(view, t, detailId) {
     /* 섹션 접기/펴기 — 원본 GaugeUiState 자리. 펴면 차트를 다시 그린다(숨은 동안 폭이 0). */
     els(view, '[data-toggle]').forEach(function (btn) {
       btn.addEventListener('click', function () {
@@ -1116,37 +1666,86 @@
       b.addEventListener('click', function () {
         ST.target = b.getAttribute('data-target');
         ST.edited = false;
+        dropValues();
         saveState();
-        V.gauge(liveView(), null);
+        rerender(view, detailId);
       });
     });
 
-    /* 자동/수동 */
+    /* 자동/수동 — 수동이면 지금 보이던 여섯 값을 복사해 입력값으로 시작한다 */
     els(view, '[data-mode]').forEach(function (b) {
       b.addEventListener('click', function () {
         var mode = b.getAttribute('data-mode');
         if (mode === ST.mode) return;
         if (mode === 'manual') {
-          var cur = liveValues(ST.target);
+          var cur = valuesRef(ST.target);
           ST.manual[ST.target] = {};
           IND.forEach(function (s) { ST.manual[ST.target][s.key] = cur[s.key]; });
+        } else {
+          ST.manual[ST.target] = null;
+          ST.priceSrc = null;
+          ST.priceVal = null;
         }
         ST.mode = mode;
         ST.edited = false;
-        LIVE = {};
+        dropValues();
         saveState();
         recordNow(ST.target);
-        V.gauge(liveView(), null);
+        rerender(view, detailId);
       });
     });
 
-    /* 슬라이더·숫자 — 만지면 위가 같이 움직인다 */
+    /* 확정 종가 / 실시간(프리마켓) — 홈과 같은 Basis 저장값을 쓴다 */
+    els(view, '[data-basis]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        if (!w.Basis) return;
+        var want = b.getAttribute('data-basis');
+        if (want === Basis.get()) return;
+        Basis.set(want);
+        ST.edited = false;
+        ST.priceSrc = null;
+        dropValues();
+        rerender(view, detailId);
+      });
+    });
+
+    /* 실시간 새로고침 — live.js 의 같은 5분 경로를 부른다(새 타이머 없음).
+       새 값은 'stockrebal:live' 신호로 이 화면에 다시 그려진다. */
+    var rf = el('#gLiveRefresh', view);
+    if (rf) rf.addEventListener('click', function () {
+      if (!w.Basis) return;
+      rf.disabled = true;
+      rf.textContent = '불러오는 중…';
+      var p = (w.Live && w.Live.refresh) ? w.Live.refresh()
+        : Basis.load(true).then(function (doc) { if (doc && Basis.adopt) Basis.adopt(doc); return doc; });
+      p.then(function () {
+        if (!(w.Live && w.Live.refresh)) { dropValues(); rerender(view, detailId); }
+        toast(Basis.status().hasLive ? '실시간 값을 다시 읽었습니다.' : 'live.json 이 없어 확정 종가로 남습니다.');
+      });
+    });
+
+    /* 여섯 지표 펼치기/접기 */
+    var ib = el('#gIndsBtn', view);
+    if (ib) ib.addEventListener('click', function () {
+      var box = el('#gInds', view);
+      if (!box) return;
+      var open = box.hasAttribute('hidden');
+      if (open) box.removeAttribute('hidden'); else box.setAttribute('hidden', '');
+      ST.open.inds = open;
+      saveState();
+      ib.setAttribute('aria-expanded', open ? 'true' : 'false');
+      var mark = ib.querySelector('.mark');
+      if (mark) mark.textContent = open ? '접기 ▴' : '펼치기 ▾';
+    });
+
+    /* 슬라이더·숫자 — 여섯 값이 유일한 입력. 만지면 점수·가격·레이더가 한 번에 따라온다. */
     els(view, '[data-slider]').forEach(function (sl) {
       sl.addEventListener('input', function () {
         var key = sl.getAttribute('data-slider');
         var v = Number(sl.value);
-        liveValues(ST.target)[key] = v;
+        valuesRef(ST.target)[key] = v;
         ST.edited = true;
+        if (key === 'dd' || key === 'gap') ST.priceSrc = { t: ST.target, key: key };
         var num = el('[data-num="' + key + '"]', view);
         if (num && document.activeElement !== num) num.value = key === 'vixr' ? v.toFixed(2) : v.toFixed(1);
         updateLive(view, ST.target);
@@ -1157,40 +1756,20 @@
         var key = inp.getAttribute('data-num');
         var v = numOrNull(inp.value);
         if (v === null) return;
-        liveValues(ST.target)[key] = v;
+        valuesRef(ST.target)[key] = v;
         ST.edited = true;
+        if (key === 'dd' || key === 'gap') ST.priceSrc = { t: ST.target, key: key };
         var sl = el('[data-slider="' + key + '"]', view);
         if (sl) sl.value = String(v);
         updateLive(view, ST.target);
       });
     });
 
-    /* 가격·VIX로 다시 계산 */
-    var calc = el('#gCalc', view);
-    if (calc) calc.addEventListener('click', function () {
-      var px = numOrNull(el('#gPx', view).value);
-      var vx = numOrNull(el('#gVix', view).value);
-      var err = el('#gInputErr', view);
-      var pack = Data.gauge.targets[ST.target].recompute;
-      if (!px || px <= 0) { err.textContent = '가격은 0보다 큰 숫자로 넣어 주세요.'; return; }
-      if (!vx || vx <= 0) { err.textContent = 'VIX는 0보다 큰 숫자로 넣어 주세요.'; return; }
-      var vals = valuesFromInputs(pack, px, vx);
-      if (!vals) { err.textContent = '일봉 자료가 모자라 이 값으로 계산할 수 없습니다.'; return; }
-      err.textContent = '';
-      ST.mode = 'manual';
-      ST.manual[ST.target] = vals;
-      ST.edited = true;
-      LIVE = {};
-      saveState();
-      V.gauge(liveView(), null);
-      toast(px + ' · VIX ' + vx + ' 로 다시 계산했습니다.');
-    });
-
     /* 지표 추적 — 지금 값 기록 */
     var tn = el('#gTrackNow', view);
     if (tn) tn.addEventListener('click', function () {
       recordNow(ST.target);
-      V.gauge(liveView(), null);
+      rerender(view, detailId);
       toast('지금 값을 기록했습니다.');
     });
 
@@ -1204,13 +1783,22 @@
       });
     });
 
+    /* 겹쳐 보기 — 저점 기준 창(1·2·3년) */
+    var owin = el('#ovWin', view);
+    if (owin) owin.addEventListener('input', function () {
+      OV.win = Number(owin.value) || 1;
+      S.set('crashWin', OV.win);
+      var lab = el('#ovWinLab', view);
+      if (lab) lab.textContent = OV.win + '년';
+      drawOverlap(view, Data.crashes.cases);
+    });
+
     /* 겹쳐 보기 — 사례 칩 켜고 끄기 */
     els(view, '[data-ovcase]').forEach(function (b) {
       b.addEventListener('click', function () {
         var id = b.getAttribute('data-ovcase');
         var i = OV_OFF.indexOf(id);
         if (i >= 0) OV_OFF.splice(i, 1); else OV_OFF.push(id);
-        S.set('crashOff', OV_OFF);
         b.classList.toggle('on', OV_OFF.indexOf(id) < 0);
         drawOverlap(view, Data.crashes.cases);
       });
@@ -1225,9 +1813,15 @@
         var r = ovHost.getBoundingClientRect();
         if (!r.width) return;
         var vx = (clientX - r.left) / r.width * o.W;
-        var day = Math.round((vx - o.pad.l) / (o.W - o.pad.l - o.pad.r) * 504 - 252);
-        day = Math.max(-252, Math.min(252, day));
         var box = el('#ovReadout', view);
+        if (o.kind === 'date') {
+          var ms = o.x0 + (vx - o.pad.l) / (o.W - o.pad.l - o.pad.r) * (o.x1 - o.x0);
+          if (box) box.innerHTML = ovDateReadout(ms, o.series, o.today);
+          return;
+        }
+        var lim3 = 252 * (OV.win || 1);
+        var day = Math.round((vx - o.pad.l) / (o.W - o.pad.l - o.pad.r) * (2 * lim3) - lim3);
+        day = Math.max(-lim3, Math.min(lim3, day));
         if (box) box.innerHTML = ovReadoutText(day, o.scale, o.today, o.series, view);
       };
       ovHost.addEventListener('mousemove', function (e) { readAt(e.clientX); });
@@ -1257,10 +1851,12 @@
       b.classList.toggle('on', b.getAttribute('data-scale') === crashScale);
     });
 
-    recordNow(t);
+    if (!NO_RECORD) recordNow(t);
   }
 
-  /* 가격·VIX → 여섯 지표 (원본 Gauge.valuesFromInputs 와 같은 식) */
+  /* 가격·VIX → 여섯 지표 (원본 Gauge.valuesFromInputs 와 같은 식)
+     화면에서는 빼었지만(값 직접 입력 삭제) Basis.pairFor 가 live.json 에 값이 없을 때
+     이 함수로 실시간 값을 낸다. */
   function valuesFromInputs(pack, price, vixLevel) {
     if (!pack || !pack.closes || pack.closes.length < 260) return null;
     var closes = pack.closes.slice();
@@ -1407,8 +2003,68 @@
     /* 그 기준의 여섯 지표 — live.json 의 가격·VIX 로 자동과 같은 식으로 다시 낸다 */
     valuesFor: function (target) {
       if (Basis.get() !== 'live') return null;
+      return Basis.liveFor(target);
+    },
+    /* 기준과 무관하게 실시간 값을 본다(확정 화면에서도 옆에 나란히 보여 주기 위해) */
+    liveFor: function (target) {
       if (!Data.gauge || !Data.gauge.targets || !Data.gauge.targets[target]) return null;
       return Basis.pairFor(target);
+    },
+    /* 확정(종가) 점수 — live.json 이 마지막 완료 정규장으로 매일 다시 계산해 둔 값 */
+    confirmed: function (target) {
+      var sym = target === 'ndx' ? 'TQQQ' : 'SOXL';
+      var e = findSym(sym);
+      if (!e || e.score === null || e.score === undefined || !e.scoreRows || !e.scoreAsOf) return null;
+      var d = e.scoreDetail || {}, vx = d.vix || {};
+      return {
+        score: num(e.score), rows: e.scoreRows, verdict: e.scoreVerdict, asOf: e.scoreAsOf,
+        values: e.scoreValues || null, close: num(d.close), peak: num(d.peak), ma200: num(d.ma200),
+        dd: num(d.dd), vix: num(vx.last), ma50_vix: num(vx.ma50), vix_samples: vx.samples || null
+      };
+    },
+    /* 최근 한 달 일봉 — 파이프라인이 5년 일봉에서 잘라 live.json 에 넣는다 */
+    dayBars: function (target) {
+      var sym = target === 'ndx' ? 'TQQQ' : 'SOXL';
+      var e = findSym(sym);
+      if (!e || !e.dayBars || !e.dayBars.length) return null;
+      var out = [];
+      e.dayBars.forEach(function (b) {
+        var d = b.d || b.date, o = num(b.o), h = num(b.h), l = num(b.l), c = num(b.c);
+        if (!d || c === null) return;
+        out.push([d, o === null ? c : o, h === null ? Math.max(o || c, c) : h, l === null ? Math.min(o || c, c) : l, c]);
+      });
+      return out.length ? out : null;
+    },
+    /* live.json 을 다른 곳(live.js 5분 갱신)이 새로 받았을 때 이 사본도 갈아 끼운다 */
+    adopt: function (doc) {
+      if (doc && doc.updatedAt) { LIVE.json = doc; LIVE.tried = true; LIVE.promise = null; }
+    },
+    /* 지표 추적 머리에 적을 실시간 정보 — 점수·값·시각·세션·파일 갱신 시각 */
+    meta: function (target) {
+      if (!target) target = 'ndx';
+      var sym = target === 'ndx' ? 'TQQQ' : 'SOXL';
+      var e = findSym(sym);
+      if (!e) return null;
+      var j = LIVE.json || {};
+      var at = e.lastTimeEt || e.time || null;
+      var sess = e.sessionLabel || (j.market && j.market.sessionLabel) || null;
+      var ageMin = null;
+      if (j.updatedAt) {
+        var ts = Date.parse(j.updatedAt);
+        if (!isNaN(ts)) ageMin = Math.round((Date.now() - ts) / 60000);
+      }
+      var mk = j.market || {};
+      var liveSess = mk.session === 'pre' || mk.session === 'regular' || mk.session === 'post';
+      return {
+        score: num(e.scoreLive), values: e.scoreLiveValues || null,
+        asOf: e.scoreLiveAsOf || null,
+        price: num(e.scoreLivePrice) || num(e.last),
+        atEt: at, sessionLabel: sess,
+        updatedAtKst: j.updatedAtKst || null, ageMin: ageMin,
+        basis: e.scoreLiveBasis || null,
+        etDate: mk.etDate || null,
+        barLive: liveSess ? (mk.etDate || null) : null
+      };
     },
     /* 대상 가격·VIX 한 쌍 — live.json 이 이미 계산해 둔 scoreLiveValues 가 있으면 그것을 쓴다(같은 식) */
     pairFor: function (target) {
@@ -1422,7 +2078,8 @@
           vix: num(vq.price),
           quote: Basis.quote(sym),
           at: entry.lastTime || null,
-          score: num(entry.scoreLive)
+          score: num(entry.scoreLive),
+          file: true   /* live.json 이 계산해 둔 값 — VIX도 그때 쓴 확정 종가 */
         };
       }
       var pq = Basis.quote(sym);
