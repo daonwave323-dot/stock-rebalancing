@@ -16,6 +16,10 @@
   var LS_WATCH = 'watch';
   var REFRESH_MS = 5 * 60 * 1000;
 
+  /* 진짜 fetch 는 처음에 붙잡아 둔다 — 아래에서 data/live.json 요청을 가로채므로
+     스스로를 다시 부르면 영원히 기다리게 된다. */
+  var nativeFetch = (w.fetch && w.fetch.bind(w)) || null;
+
   var LIVE = { ok: false, data: null, error: null };
   var strip = null;
 
@@ -57,17 +61,53 @@
     var isLocal = /^(localhost|127\.0\.0\.1|\[::1\]|0\.0\.0\.0)$/.test(location.hostname);
     var head = isLocal
       ? Promise.reject(new Error('로컬 확인 — 저장소 원본은 보지 않는다'))
-      : fetch(RAW + t, { cache: 'no-store' }).then(function (r) {
+      : nativeFetch(RAW + t, { cache: 'no-store' }).then(function (r) {
         if (!r.ok) throw new Error('raw live.json ' + r.status);
         return r.json();
       });
     return head.catch(function (e) {
-      return fetch(REL + t, { cache: 'no-store' }).then(function (r) {
+      return nativeFetch(REL + t, { cache: 'no-store' }).then(function (r) {
         if (!r.ok) throw new Error('live.json ' + r.status);
         return r.json();
       }).catch(function () { throw e; });
     });
   }
+
+  /* 한 번만 받는다 — 이 페이지 안에서 live.json 을 원하는 곳(점수 화면·증시 탭)이 모두 같은 값을 보게. */
+  var pending = null;
+  function liveDoc(force) {
+    if (force) pending = null;
+    if (LIVE.data && !force) return Promise.resolve(LIVE.data);
+    if (!pending) {
+      pending = fetchLive().then(function (d) {
+        LIVE.ok = true; LIVE.data = d;
+        return d;
+      });
+    }
+    return pending;
+  }
+
+  /* 같은 사이트의 data/live.json 요청을 위에서 받아 둔 값으로 돌려준다.
+     페이지 빌드가 늦어 옛 사본이 오는 일을 막고, 화면마다 다른 값이 뜨는 것을 막는다.
+     (다른 주소·다른 파일 요청은 그대로 통과시킨다) */
+  (function patchFetch() {
+    if (!nativeFetch || w.__livePatched) return;
+    w.__livePatched = true;
+    var real = nativeFetch;
+    w.fetch = function (input, init) {
+      var url = '';
+      try { url = (typeof input === 'string') ? input : (input && input.url) || ''; } catch (e) {}
+      var same = /(^|\/)data\/live\.json(\?|$)/.test(url) && !/^[a-z]+:\/\//i.test(url);
+      if (same && w.Response) {
+        return liveDoc().then(function (doc) {
+          return new Response(JSON.stringify(doc), {
+            status: 200, headers: { 'Content-Type': 'application/json' }
+          });
+        }).catch(function () { return real(input, init); });
+      }
+      return real(input, init);
+    };
+  })();
 
   /* ---------------------------------------------------------------- 자료 갈아 끼우기 */
 
@@ -313,8 +353,7 @@
   /* ---------------------------------------------------------------- 시작 */
 
   function refresh(D) {
-    return fetchLive().then(function (live) {
-      LIVE.ok = true; LIVE.data = live;
+    return liveDoc(true).then(function (live) {
       if (D) applyScores(D);
       else if (w.Data && w.Data.ready) applyScores(w.Data);
       mountStrip();

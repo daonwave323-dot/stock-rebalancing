@@ -49,8 +49,10 @@ def serve():
 def main():
     os.makedirs(SHOTS, exist_ok=True)
     had_live = os.path.exists(LIVE)
-    if had_live:
-        shutil.copy(LIVE, BACKUP)
+    if not had_live:
+        print('(data/live.json 이 없어 이번 확인은 건너뜁니다 — 먼저 tools/live_update.py 를 돌려 주세요)')
+        return 2
+    shutil.copy(LIVE, BACKUP)
 
     from playwright.sync_api import sync_playwright
     httpd = serve()
@@ -189,4 +191,8 @@ def main():
 
 
 if __name__ == '__main__':
-    sys.exit(main())
+    rc = main()
+    # 확인 중 live.json 을 지웠다 넣었다 하므로 끝나면 반드시 되돌린다
+    if os.path.exists(BACKUP):
+        shutil.copy(BACKUP, LIVE)
+    sys.exit(rc)
