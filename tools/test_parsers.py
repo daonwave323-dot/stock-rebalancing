@@ -31,7 +31,7 @@ def main():
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     base = 'http://127.0.0.1:%d/' % httpd.server_address[1]
     # 원본 앱 시험 자료는 저장소 밖(작업 공간)에 둔다 — 원본 자산을 공개 저장소에 넣지 않는다.
-    fx = os.environ.get('FIXTURES', os.path.join(os.path.dirname(ROOT), 'test-fixtures'))
+    fx = os.environ.get('FIXTURES') or os.path.join(os.path.dirname(os.path.normpath(ROOT)), 'test-fixtures')
 
     def b64(name):
         with open(os.path.join(fx, name), 'rb') as f:
