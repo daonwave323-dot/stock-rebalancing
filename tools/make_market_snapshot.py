@@ -303,6 +303,30 @@ def naver_bars(sym, days=400):
     return out
 
 
+def watch_targets():
+    """관심 목록·5분 갱신 대상 심볼 — 시가총액 상위에 들지 않는 ETF(TQQQ·SOXL)·중소형 종목도
+    종목 상세의 차트가 비지 않게 봉을 담는다. `add_watch_candles.py` 와 같은 목록 규칙."""
+    out = []
+    for name in ("watchlist.json", "live.json"):
+        try:
+            with open(os.path.join(ROOT, "data", name), encoding="utf-8") as f:
+                doc = json.load(f)
+        except Exception:
+            continue
+        syms = doc.get("symbols") if isinstance(doc, dict) else doc
+        if isinstance(syms, dict):
+            syms = list(syms.keys())
+        if not isinstance(syms, list):
+            continue
+        for s in syms:
+            if isinstance(s, dict):
+                s = s.get("symbol") or s.get("sym") or ""
+            s = str(s).strip().upper()
+            if s and not s.startswith("^") and s not in out:
+                out.append(s)
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--no-candles", action="store_true")
@@ -446,6 +470,9 @@ def main():
             targets.append((r["sym"], "us", r["sym"]))
         for r in kr_rows[:args.candles_kr]:
             targets.append((r["sym"], "kr", r["sym"]))
+        for sym in watch_targets():
+            m = re.match(r"^(\d{6})\.(KS|KQ)$", sym)
+            targets.append((m.group(1) if m else sym, "kr" if m else "auto", sym))
         seen = set()
         for sym, kind, key in targets:
             if key in seen:
@@ -458,6 +485,9 @@ def main():
                     bars = naver_bars(sym)
                 elif kind == "etf":
                     bars = nasdaq_bars(sym, "etf")
+                elif kind == "auto":
+                    # 종목·ETF 구분을 미리 알 수 없다 — 둘 다 받아 보고 있는 쪽을 쓴다.
+                    bars = nasdaq_bars(sym, "stocks") or nasdaq_bars(sym, "etf")
                 else:
                     bars = nasdaq_bars(sym, "stocks")
                 if bars:

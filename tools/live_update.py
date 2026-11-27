@@ -865,6 +865,12 @@ def refresh_candles(root, out_path):
     for k in ("^NDX", "^VIX"):
         if k not in keys:
             keys.append(k)
+    # 관심 목록·5분 갱신 대상도 봉을 가진다 — 시가총액 상위에 들지 않는 ETF(TQQQ·SOXL)와
+    # 중소형 종목의 상세 화면 차트가 비지 않게. 국장은 6자리 키로 담는다(스냅샷 표기와 같게).
+    for s in load_watchlist(os.path.join(root, "data", "watchlist.json")) + ["TQQQ", "SOXL"]:
+        b = re.sub(r"^(\d{6})\.(KS|KQ)$", r"\1", s.strip().upper())
+        if b and not b.startswith("^") and b not in keys:
+            keys.append(b)
     fx = Fetcher()
     out, failed = {}, []
     for key in keys:

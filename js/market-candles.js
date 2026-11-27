@@ -241,18 +241,53 @@
     return { ok: bars.length >= sp.need, count: bars.length, need: sp.need, span: sp };
   }
 
-  /* 봉 자료는 따로 한 파일(data/candles.json, 약 1MB)에 있어 차트를 열 때 한 번만 받는다. */
+  /* 봉 자료는 따로 한 파일(data/candles.json, 약 1MB)에 있어 차트를 열 때 한 번만 받는다.
+     파일의 키는 스냅샷 표기(`035720`)이고 관심 목록·5분 갱신은 야후 표기(`035720.KS`)를 쓴다 —
+     양쪽 표기를 같은 키로 맞춰 찾는다. */
   var cache = {};
+  function candleKey(sym) {
+    var s = String(sym || '').trim();
+    return (w.Mkt && Mkt.baseSym) ? Mkt.baseSym(s) : s;
+  }
+  function barsOf(syms, sym) {
+    if (!syms) return null;
+    var s = String(sym || '').trim();
+    var k = candleKey(s);
+    return syms[s] || syms[s.toUpperCase()] || syms[k] || syms[k.toUpperCase()] ||
+      syms[k + '.KS'] || syms[k + '.KQ'] || null;
+  }
   function loadFor(sym) {
-    if (cache[sym]) return Promise.resolve(cache[sym]);
+    var key = candleKey(sym);
+    if (cache[key]) return Promise.resolve(cache[key]);
     if (!w.Mkt) return Promise.resolve([]);
     return Mkt.loadCandles().then(function (js) {
-      var bars = (js && js.symbols && js.symbols[sym]) || [];
-      cache[sym] = bars;
+      var bars = barsOf(js && js.symbols, sym) || [];
+      if (bars.length) cache[key] = bars;   // 빈 결과는 담아 두지 않는다(자료가 늦게 와도 다시 찾게)
       return bars;
     });
   }
 
+  function drawNote(box, text) {
+    var canvas = box.querySelector('canvas');
+    if (!canvas) return;
+    var dpr = Math.min(2, window.devicePixelRatio || 1);
+    var W = box.clientWidth || 320, H = 200;
+    box.style.height = H + 'px';
+    canvas.width = Math.round(W * dpr);
+    canvas.height = Math.round(H * dpr);
+    canvas.style.height = H + 'px';
+    var ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = css('--tx3', '#8b93a7');
+    ctx.font = '12px system-ui, -apple-system, sans-serif';
+    ctx.textAlign = 'center';
+    var lines = String(text).split('\n');
+    lines.forEach(function (t, i) {
+      ctx.fillText(t, W / 2, H / 2 - (lines.length - 1) * 9 + i * 18);
+    });
+  }
+
   w.Candles = { spans: SPANS, draw: draw, fold: fold, usable: usable, spanOf: spanOf,
-    loadFor: loadFor, cache: cache }; 
+    loadFor: loadFor, cache: cache, drawNote: drawNote, key: candleKey }; 
 })(window);

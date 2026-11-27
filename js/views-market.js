@@ -895,7 +895,8 @@
       ' <span class="cd2">' + esc(sym) + '</span></div>';
     if (!q) {
       h += '<section class="panel"><div class="empty">' + esc(sym) + ' 자료가 스냅샷에 없습니다.<br>' +
-        '<span class="small">관심 종목에 담으면 5분 갱신 파이프라인이 다음 주기에 받아 옵니다. 값을 지어내지 않습니다.</span></div></section>';
+        '<span class="small">관심 종목에 담으면 5분 갱신 파이프라인이 다음 주기에 받아 옵니다. 값을 지어내지 않습니다.</span>' +
+        '<div style="margin-top:10px"><a class="btn sm ghost" href="#/market">← 증시 목록으로</a></div></div></section>';
       view.innerHTML = h;
       bindTop(view, false);
       stopTimer();
@@ -925,7 +926,7 @@
       Candles.spans.map(function (s) {
         return '<button class="tab' + (s.key === defaultSpan() ? ' on' : '') + '" data-cspan="' + s.key + '" type="button">' + s.label + '</button>';
       }).join('') + '</div>' + rangeRow();
-    h += '<div class="chart-box" id="cbox" style="margin-top:8px"><canvas></canvas></div>' +
+    h += '<div class="chart-box" id="cbox" data-sym="' + esc(sym) + '" style="margin-top:8px"><canvas></canvas></div>' +
       '<div class="chart-readout note" style="margin-top:6px">차트를 짚으면 그 봉의 값이 나옵니다.</div>' +
       '<div class="ma-legend" id="maleg"></div>' +
       '<div class="note" id="cnote"></div></section>';
@@ -937,9 +938,9 @@
       kv('PSR', fmt(raw.psr, 2)) +
       kv('EPS', raw.eps == null ? '—' : Mkt.cur(raw.eps, cur)) +
       kv('배당수익률', raw.div == null ? '—' : raw.div.toFixed(2) + '%') +
-      kv('거래량', Mkt.vol(raw.vol)) +
+      kv('거래량', Mkt.vol(raw.vol != null ? raw.vol : q.vol)) +
       kv('거래대금', Mkt.money(q.val, cur)) +
-      '</div><div class="note">값이 없는 칸은 —입니다(무료 공개 소스에 없는 항목).</div></section>';
+      '</div><div class="note">' + valNote(raw) + '</div></section>';
 
     h += '<section class="panel"><div class="card-h"><h2>기술적 지표</h2></div><div class="kv">' +
       kv('일간 RSI', fmt(raw.rsi, 1)) +
@@ -964,6 +965,9 @@
       '</div><div class="note">트레이딩뷰 스캐너 값(지연). 목표가는 참고 값이며 매수·매도 권유가 아닙니다.</div></section>';
 
     h += '<div class="note">값의 출처 — ' + esc(q.src || '') + ' · ' + esc(Mkt.snap ? Mkt.snap.delayNote : '') + '</div>';
+    if (!raw.per && !raw.pbr && !raw.psr && !raw.eps && !q.val) {
+      h += '<div class="note">이 종목은 스냅샷에 기업 지표가 없어 대부분 —입니다. 5분 갱신은 가격·거래량만 받아 오므로 PER·PBR 은 채워지지 않습니다.</div>';
+    }
     view.innerHTML = h;
     bindTop(view, false);
     bindDetail(view, sym, q);
@@ -972,9 +976,44 @@
 
     var maOff = maOffObj();
     Candles.loadFor(sym).then(function (bars) {
-      renderChart(sym, q, bars, 'day', maOff);
+      if (bars && bars.length) { renderChart(sym, q, bars, 'day', maOff); return; }
+      // 봉 파일에 없는 종목(관심 종목에 새로 담은 종목·ETF) — 5분 갱신이 받아 둔 일봉이 있으면 그것으로 그린다.
+      var lb = liveBars(q);
+      if (lb.length) {
+        Candles.cache[Candles.key(sym)] = lb;
+        renderChart(sym, q, lb, 'day', maOff, 'live');
+        return;
+      }
+      renderChart(sym, q, [], 'day', maOff);
     });
     stopTimer();
+  }
+
+  /* live.json 의 dayBars 는 객체({d,o,h,l,c})다 — 캔들 그리기가 쓰는 배열 [날짜,시,고,저,종,거래량] 로 맞춘다
+     (gauge.js 의 Basis.dayBars 와 같은 변환 규칙). */
+  function liveBars(q) {
+    var raw = (q && q.live && q.live.dayBars) || [];
+    var out = [];
+    raw.forEach(function (b) {
+      if (Array.isArray(b)) { if (b[0] && b[4] != null) out.push(b); return; }
+      var d = b && (b.d || b.date);
+      if (!d || b.c == null || isNaN(Number(b.c))) return;
+      var c = Number(b.c);
+      var o = b.o == null ? c : Number(b.o);
+      var h = b.h == null ? Math.max(o, c) : Number(b.h);
+      var l = b.l == null ? Math.min(o, c) : Number(b.l);
+      out.push([d, o, h, l, c, b.v == null ? 0 : Number(b.v)]);
+    });
+    return out;
+  }
+
+  /* 밸류에이션 꼬리말 — ETF·지수처럼 기업 지표 자체가 없는 종목과, 자료만 빠진 종목을 구분해 적는다. */
+  function valNote(raw) {
+    var none = raw.per == null && raw.pbr == null && raw.psr == null && raw.eps == null && raw.div == null;
+    if (none) {
+      return '기업 지표(PER·PBR·PSR·EPS·배당)가 없는 종목입니다 — ETF·지수이거나 무료 공개 소스에 없는 종목입니다. 값이 없는 칸은 —입니다.';
+    }
+    return '값이 없는 칸은 —입니다(무료 공개 소스에 없는 항목).';
   }
 
   function kv(k, v) { return '<div><b>' + esc(k) + '</b><span>' + v + '</span></div>'; }
@@ -1005,7 +1044,7 @@
         view.querySelectorAll('[data-cspan]').forEach(function (x) { x.classList.remove('on'); });
         b.classList.add('on');
         var sp = b.getAttribute('data-cspan');
-        renderChart(sym, q, Candles.cache && Candles.cache[sym], sp, maOffObj());
+        renderChart(sym, q, Candles.cache && Candles.cache[Candles.key(sym)], sp, maOffObj());
       });
     });
   }
@@ -1048,35 +1087,39 @@
           x.classList.toggle('on', on);
           x.setAttribute('aria-pressed', on);
         });
-        renderChart(sym, q, Candles.cache && Candles.cache[sym], span, maOffObj());
+        renderChart(sym, q, Candles.cache && Candles.cache[Candles.key(sym)], span, maOffObj());
       });
     });
   }
 
-  function renderChart(sym, q, bars, spanKey, maOff) {
+  function renderChart(sym, q, bars, spanKey, maOff, barsSrc) {
     var view = document.getElementById('view');
     if (!view) return;
     var box = view.querySelector('#cbox');
     if (!box) return;
+    // 화면을 떠난 뒤 늦게 도착한 봉 요청이 다른 종목 화면에 그려지지 않게 한다.
+    if (box.getAttribute('data-sym') && box.getAttribute('data-sym') !== sym) return;
     var cur = q.cur;
     var all = bars || [];
     var sp = Candles.spanOf(spanKey);
-    var use = Candles.usable(all, spanKey);
     // 기간(6개월·1년·5년) — 일봉을 이만큼 잘라 넘긴다. 주·월·연봉 묶기는 Candles.fold 가 한다.
     var n = rangeN(st.range);
     var picked = all.length > n ? all.slice(all.length - n) : all;
+    var use = Candles.usable(picked, spanKey);   // 기간으로 자른 뒤 기준 — 모자란 봉 단위를 정확히 적는다
     var note = view.querySelector('#cnote');
+    var leg0 = view.querySelector('#maleg');
+    var lab = view.querySelector('#cspan');
+    if (lab) lab.textContent = sp.label;
     if (!all.length) {
-      box.querySelector('canvas').getContext('2d');
-      box.style.height = '220px';
-      if (note) note.textContent = '이 종목의 봉 자료가 스냅샷에 없습니다(상위 종목·지수 위주로 담았습니다). 값을 지어내지 않습니다.';
-      var leg0 = view.querySelector('#maleg');
+      Candles.drawNote(box, '이 종목의 봉 자료가 아직 없습니다\n관심 종목에 담으면 5분 갱신이 받아 옵니다');
+      if (note) note.textContent = '봉 파일(data/candles.json)에 이 종목이 없습니다. 공개 시세 창구에서 받아 오는 상위 종목·지수 위주로 담아 두었습니다. 값을 지어내지 않습니다.';
       if (leg0) leg0.innerHTML = '';
       return;
     }
     var res = Candles.draw(box, { bars: picked, span: spanKey, market: q.market, maOff: maOff, height: 260, cur: cur, window: 0 });
     if (note) {
-      note.textContent = res.bars.length + '개 ' + sp.label + ' · ' + rangeLabel(st.range) + ' 구간 · ' + (use.ok ? '' :
+      note.textContent = (barsSrc === 'live' ? '5분 갱신이 받아 둔 최근 ' + all.length + '일 일봉입니다(봉 파일에 없는 종목). ' : '') +
+        res.bars.length + '개 ' + sp.label + ' · ' + rangeLabel(st.range) + ' 구간 · ' + (use.ok ? '' :
         '이 봉 단위는 자료가 ' + use.count + '개뿐입니다(약 ' + (sp.need) + '개 필요). 봉을 지어내지 않습니다. ') +
         '이동평균선 ' + sp.ma.join('/') + ' ' + sp.unit;
     }
@@ -1114,7 +1157,7 @@
       Candles.spans.map(function (s) {
         return '<button class="tab' + (s.key === defaultSpan() ? ' on' : '') + '" data-cspan="' + s.key + '" type="button">' + s.label + '</button>';
       }).join('') + '</div>' + rangeRow();
-    h += '<div class="chart-box" id="cbox" style="margin-top:8px"><canvas></canvas></div>' +
+    h += '<div class="chart-box" id="cbox" data-sym="' + esc(sym) + '" style="margin-top:8px"><canvas></canvas></div>' +
       '<div class="chart-readout note" style="margin-top:6px">차트를 짚으면 그 봉의 값이 나옵니다.</div>' +
       '<div class="ma-legend" id="maleg"></div><div class="note" id="cnote"></div>' +
       '<div class="note">봉은 야후 일봉(지수·주요 종목)이고, 주·월·연봉은 브라우저가 같은 규칙으로 묶습니다. 이동평균선은 그 봉 단위의 종가로 계산합니다.</div></section>';
@@ -1125,7 +1168,7 @@
       b.addEventListener('click', function () {
         view.querySelectorAll('[data-cspan]').forEach(function (x) { x.classList.remove('on'); });
         b.classList.add('on');
-        renderChart(sym, q, Candles.cache && Candles.cache[sym], b.getAttribute('data-cspan'), maOffObj());
+        renderChart(sym, q, Candles.cache && Candles.cache[Candles.key(sym)], b.getAttribute('data-cspan'), maOffObj());
       });
     });
     bindRange(view, sym, q);

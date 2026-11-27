@@ -101,9 +101,16 @@
     return 'us';
   };
 
+  /* 스냅샷 표기(`005930`)와 야후 표기(`005930.KS`)가 섞여 들어와도 같은 종목으로 찾는다.
+     관심 목록에 `.KS` 로 담긴 국장 종목이 상세에서 '자료 없음'이 되던 원인. */
   M.sym = function (sym) {
     if (!sym) return null;
-    return (M.snap && M.snap.symbols && M.snap.symbols[sym]) || null;
+    var S2 = M.snap && M.snap.symbols;
+    if (!S2) return null;
+    var s = String(sym).trim();
+    var b = baseSym(s);
+    return S2[s] || S2[s.toUpperCase()] || S2[b] || S2[b.toUpperCase()] ||
+      S2[b + '.KS'] || S2[b + '.KQ'] || null;
   };
 
   /* 국내 종목의 한국어 이름 — data/names-kr.json(네이버 금융 시가총액 목록). 없으면 null. */
@@ -127,7 +134,7 @@
       sym: sym,
       name: M.krName(sym) || (s && (s.name || s.desc)) || (l && l.name) || sym,
       desc: (s && s.desc) || '',
-      market: (s && s.market) || (/^\d{6}$/.test(sym) ? 'kr' : 'us'),
+      market: (s && s.market) || (/^\d{6}$/.test(baseSym(sym)) ? 'kr' : 'us'),
       cur: (s && s.cur) || (l && l.currency) || 'USD',
       exch: (s && (s.exch || s.board)) || '',
       sector: (s && s.sector) || '',
