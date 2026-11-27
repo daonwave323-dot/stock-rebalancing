@@ -1399,7 +1399,7 @@
       }
       return {
         sym: sym, price: price, changePct: chg, at: at,
-        close: num(e.close) || num(e.prevClose) || num(e.previousClose),
+        close: num(e.close) || num(e.regularClose) || num(e.prevClose) || num(e.previousClose),
         session: sess ? sess.word : null, hhmm: sess ? sess.hhmm : kstTime(at),
         source: e.source || (LIVE.json && LIVE.json.source) || 'live.json'
       };

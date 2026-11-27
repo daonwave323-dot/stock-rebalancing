@@ -1190,10 +1190,43 @@
       }
       btn.disabled = true;
       btn.textContent = '조회 중…';
-      var done = 0, ok = 0;
+      var done = 0, ok = 0, liveHits = 0;
       var prices = {};
+      var pendingFetch = 0;
+
+      function applyPrices() {
+        btn.disabled = false;
+        btn.textContent = '시세 자동 조회';
+        /* 그 사이 사용자가 표를 고쳤을 수 있으니 지금 저장된 보유에만 가격을 얹는다(예전 배열을 되쓰지 않는다) */
+        var cur = holdings();
+        cur.forEach(function (r) {
+          var sym = (r.sym || '').trim().toUpperCase();
+          if (prices[sym] != null) r.price = prices[sym];
+        });
+        if (location.hash.indexOf('#/rebalance') === 0) {
+          S.set(HOLD_KEY, cur);
+          V.rebalance(liveView());
+        }
+        if (ok > 0) toast(ok + '종목 시세를 채웠습니다' + (liveHits ? ' (5분 갱신 값)' : '') + '.');
+        else {
+          var box = document.getElementById('pxNotice');
+          if (box) box.innerHTML = '<div class="notice"><b>자동 시세를 받지 못했습니다.</b> ' +
+            '브라우저에서 금융 사이트를 직접 부를 수 없게 막혀 있는 경우입니다(교차 출처 차단). ' +
+            'data/live.json 에 그 종목이 있으면 그 값을 쓰고, 없으면 현재가를 직접 넣어 주세요.</div>';
+        }
+      }
+
+      /* 1) data/live.json 에 그 종목이 있으면 그 값을 쓴다 — 홈·매수 지표와 같은 기준의 값이다. */
       targets.forEach(function (r) {
         var sym = r.sym.trim().toUpperCase();
+        var q = w.Basis ? Basis.quote(sym) : null;
+        if (q && q.price > 0 && (w.Basis.get() === 'live' || q.close)) {
+          prices[sym] = Math.round((w.Basis.get() === 'live' ? q.price : (q.close || q.price)) * 100) / 100;
+          ok++;
+          liveHits++;
+          return;
+        }
+        pendingFetch++;
         fetch('https://query1.finance.yahoo.com/v8/finance/chart/' + encodeURIComponent(sym) + '?range=1d&interval=1d')
           .then(function (res) { if (!res.ok) throw new Error(res.status); return res.json(); })
           .then(function (j) {
@@ -1206,28 +1239,10 @@
           .catch(function () {})
           .then(function () {
             done++;
-            if (done < targets.length) return;
-            btn.disabled = false;
-            btn.textContent = '시세 자동 조회';
-            /* 그 사이 사용자가 표를 고쳤을 수 있으니 지금 저장된 보유에만 가격을 얹는다(예전 배열을 되쓰지 않는다) */
-            var cur = holdings();
-            cur.forEach(function (r) {
-              var sym = (r.sym || '').trim().toUpperCase();
-              if (prices[sym] != null) r.price = prices[sym];
-            });
-            if (location.hash.indexOf('#/rebalance') === 0) {
-              S.set(HOLD_KEY, cur);
-              V.rebalance(liveView());
-            }
-            if (ok > 0) toast(ok + '종목 시세를 채웠습니다.');
-            else {
-              var box = document.getElementById('pxNotice');
-              if (box) box.innerHTML = '<div class="notice"><b>자동 시세를 받지 못했습니다.</b> ' +
-                '브라우저에서 금융 사이트를 직접 부를 수 없게 막혀 있는 경우입니다(교차 출처 차단). ' +
-                '이 판에서는 현재가를 직접 넣어 주세요 — 2차 판에서 중계 서버를 붙여 자동으로 채웁니다.</div>';
-            }
+            if (done >= pendingFetch) applyPrices();
           });
       });
+      if (pendingFetch === 0) applyPrices();
     });
 
     recompute();
