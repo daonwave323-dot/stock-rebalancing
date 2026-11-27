@@ -135,9 +135,23 @@
     S.set('gauge', { target: ST.target, mode: ST.mode, manual: ST.manual, open: ST.open });
   }
 
+  /* 화면의 '지금' 값 — live.js 가 Data.scores 를 더 새 값으로 갈아 끼웠으면 그것을 따른다
+     (홈과 매수 지표가 같은 날짜·같은 숫자를 쓰게). 통계·일봉은 gauge.json(원본 자산) 그대로. */
+  function latest(t) {
+    var T = Data.gauge.targets[t];
+    var base = Data.gauge.as_of;
+    var sc = Data.scores && Data.scores.targets ? Data.scores.targets[t] : null;
+    if (sc && sc.rows && sc.rows.length && sc.as_of && base && sc.as_of > base) {
+      var det = sc.detail || T.detail;
+      if (det && det.vix === undefined && T.detail) det = Object.assign({}, T.detail, det);
+      return { rows: sc.rows, as_of: sc.as_of, detail: det, score: sc.score };
+    }
+    return { rows: T.rows, as_of: base, detail: T.detail, score: T.score };
+  }
+
   function autoValues(t) {
-    var T = Data.gauge.targets[t], o = {};
-    T.rows.forEach(function (r) {
+    var src = latest(t), o = {};
+    src.rows.forEach(function (r) {
       if (r.raw === null || r.raw === undefined) { o[r.key] = null; return; }
       o[r.key] = r.key === 'dd' ? Math.abs(r.raw) : r.raw;
     });
@@ -258,18 +272,20 @@
     if (!G.axes) G.axes = AXES;
 
     var t = ST.target, T = G.targets[t];
+    var L = latest(t);
     var values = liveValues(t);
     var result = scoreOf(values, t);
     var v = verdictOf(result.score);
     var axes = axesOf(values, t);
-    var D = T.detail, S_ = T.stat;
+    var D = L.detail, S_ = T.stat;
 
     var chips = '<button type="button" class="g-chip-target ' + (t === 'ndx' ? 'on' : '') + '" data-target="ndx">나스닥 TQQQ</button>' +
       '<button type="button" class="g-chip-target ' + (t === 'sox' ? 'on' : '') + '" data-target="sox">반도체 SOXL</button>';
 
     var basis = ST.mode === 'manual'
       ? '직접 입력값 · VIX ' + F.fixed(D.vix, 2) + ' · 입력한 값으로 계산'
-      : F.day(G.as_of) + ' 종가 기준 · VIX ' + F.fixed(D.vix, 2) + ' · <span class="live">지연 데이터(정적 배포)</span>';
+      : F.day(L.as_of) + ' 종가 기준 · VIX ' + F.fixed(D.vix, 2) +
+        ' · <span class="live">통계·일봉은 ' + F.day(G.as_of) + '까지</span>';
 
     /* 1) 대상·가격·기준 */
     var head =
@@ -390,7 +406,7 @@
       section('crash', '폭락 비교', '저점 전후 1년 비교 · 여섯 사례. 눌러서 폅니다.', crashHtml, !!detailId);
 
     bind(view, t);
-    drawCharts(view, t, monthPts);
+    drawCharts(view, t, monthPts, result.score);
     if (ST.open.crash || detailId) drawOverlap(view, Data.crashes.cases);
     if (detailId) {
       var c = Data.caseById(detailId);
@@ -920,7 +936,7 @@
 
   /* ------------------------------------------------------------ 차트 그리기 */
 
-  function drawCharts(view, t, monthPts) {
+  function drawCharts(view, t, monthPts, nowScore) {
     var host = el('#gMonth', view);
     if (host && monthPts.length >= 2) {
       var lo = Math.max(0, Math.min.apply(null, monthPts.map(function (p) { return p[1]; })) - 3);
@@ -939,16 +955,25 @@
     }
 
     var flow = el('#gFlow', view);
-    var weekly = (Data.gauge.weekly[t] || []);
+    var weekly = (Data.gauge.weekly[t] || []).map(function (p) { return p.slice(); });
+    /* 원본과 같이 마지막 주는 '오늘 값 그대로' — 카드의 점수와 차트 끝점이 어긋나지 않게 */
+    if (weekly.length && nowScore !== undefined && nowScore !== null) {
+      weekly[weekly.length - 1][1] = nowScore;
+    }
     if (flow && weekly.length >= 3) {
       var pts = weekly.map(function (p, i) { return [i, p[1]]; });
+      /* 가로 눈금 — 해가 바뀌는 첫 주에 2년 간격으로 */
       var ticks = [];
       var lastYear = '';
       weekly.forEach(function (p, i) {
         var y = p[0].slice(0, 4);
-        if (y !== lastYear && (y % 2 === 0 || i === 0 || i === weekly.length - 1)) { ticks.push({ x: i, label: y.slice(2) }); lastYear = y; }
-        else if (y !== lastYear) lastYear = y;
+        if (y === lastYear) return;
+        lastYear = y;
+        if (Number(y) % 2 === 0) ticks.push({ x: i, label: y.slice(2) + '년' });
       });
+      if (!ticks.length || ticks[ticks.length - 1].x !== weekly.length - 1) {
+        ticks.push({ x: weekly.length - 1, label: weekly[weekly.length - 1][0].slice(2, 4) + '년' });
+      }
       Charts.line(flow, {
         height: 180,
         series: [{ name: '밸류게이지', color: '#6a9ae0', points: pts, width: 1.7 }],
@@ -1373,11 +1398,22 @@
       if (!Data.gauge || !Data.gauge.targets || !Data.gauge.targets[target]) return null;
       return Basis.pairFor(target);
     },
-    /* 대상 가격·VIX 한 쌍 */
+    /* 대상 가격·VIX 한 쌍 — live.json 이 이미 계산해 둔 scoreLiveValues 가 있으면 그것을 쓴다(같은 식) */
     pairFor: function (target) {
       var sym = target === 'ndx' ? 'TQQQ' : 'SOXL';
-      var pq = Basis.quote(sym);
+      var entry = findSym(sym);
       var vq = Basis.quote('^VIX') || Basis.quote('VIX');
+      if (entry && entry.scoreLiveValues && vq) {
+        return {
+          values: entry.scoreLiveValues,
+          price: num(entry.scoreLivePrice) || num(entry.last),
+          vix: num(vq.price),
+          quote: Basis.quote(sym),
+          at: entry.lastTime || null,
+          score: num(entry.scoreLive)
+        };
+      }
+      var pq = Basis.quote(sym);
       if (!pq || !vq) return null;
       var vals = valuesFromInputs(Data.gauge.targets[target].recompute, pq.price, vq.price);
       if (!vals) return null;
@@ -1388,9 +1424,10 @@
       if (!j) return { hasLive: false, at: null, label: null };
       var q = Basis.quote('TQQQ') || Basis.quote('SOXL');
       if (!q) return { hasLive: false, at: null, label: null };
+      var mk = (j && j.market) || {};
       return {
         hasLive: true, at: q.at,
-        session: q.session || '프리마켓', hhmm: q.hhmm,
+        session: mk.sessionLabel || q.session || '프리마켓', hhmm: q.hhmm,
         label: '실시간(추정) · ' + (q.session ? q.session + ' ' : '') + (q.hhmm || '시각 없음')
       };
     }
