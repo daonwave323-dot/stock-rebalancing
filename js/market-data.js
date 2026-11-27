@@ -81,8 +81,15 @@
   };
 
   /* ------------------------------------------------------------ 시장·심볼 */
+  /* `005930.KS` 같은 야후 표기를 앱 표기(`005930`)로 되돌린다. */
+  function baseSym(sym) {
+    var m = /^(\d{6})\.(KS|KQ)$/i.exec(String(sym || ''));
+    return m ? m[1] : String(sym || '');
+  }
+  M.baseSym = baseSym;
+
   M.marketOf = function (sym) {
-    if (/^\d{6}$/.test(String(sym || ''))) return 'kr';
+    if (/^\d{6}$/.test(baseSym(sym))) return 'kr';
     var s = M.sym(sym);
     if (s && s.market) return s.market;
     return 'us';
@@ -239,11 +246,14 @@
     if (M.live && M.live.symbols) {
       Object.keys(M.live.symbols).forEach(function (k) {
         var l = M.live.symbols[k];
-        var mk = /^\d{6}$/.test(k) ? 'kr' : 'us';
+        var key = baseSym(k);
+        var mk = /^\d{6}$/.test(key) ? 'kr' : 'us';
         if (market && mk !== market) return;
-        if (seen[k]) return;
-        seen[k] = 1;
-        out.push({ sym: k, name: l.name || k, desc: '', market: mk, exch: '', mcap: l.marketCap });
+        if (seen[key]) return;
+        seen[key] = 1;
+        var snap = M.sym(key);
+        out.push({ sym: key, name: (snap && (snap.name || snap.desc)) || l.name || key,
+          desc: (snap && snap.desc) || '', market: mk, exch: '', mcap: l.marketCap });
       });
     }
     return out;
