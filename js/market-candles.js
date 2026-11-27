@@ -87,7 +87,9 @@
     var sp = spanOf(opts.span);
     var all = opts.bars || [];
     var bars = fold(all, sp.key);
-    if (sp.window && bars.length > sp.window) bars = bars.slice(bars.length - sp.window);
+    // opts.window 를 주면 그 값을 쓴다(0 = 자르지 않음 — 기간(6개월·1년·5년)을 화면이 먼저 잘라 넘길 때).
+    var win = opts.window != null ? opts.window : sp.window;
+    if (win && bars.length > win) bars = bars.slice(bars.length - win);
 
     if (!bars.length) {
       ctx.fillStyle = css('--dim', '#949fb1');
@@ -107,6 +109,7 @@
     if (!isFinite(lo) || !isFinite(hi) || hi <= lo) { hi = lo + 1; }
     var pad = (hi - lo) * 0.06;
     lo -= pad; hi += pad;
+    if (lo < 0) lo = 0;      // 가격은 음수가 없다 — 아래쪽에 -3.140 같은 눈금이 생기지 않게
 
     var n = bars.length;
     var step = gw / n;
@@ -174,7 +177,15 @@
     ctx.fillStyle = css('--price', '#3DD68C');
     ctx.font = '700 10px ui-monospace,Menlo,monospace';
     ctx.textAlign = 'left';
-    ctx.fillText(fmtVal(lastB[4], opts), padL + gw + 5, lastY + 3);
+    var lastTxt = fmtVal(lastB[4], opts);
+    // 마지막 종가 글자가 오른쪽 눈금 숫자와 겹치지 않게 바탕을 깔고 적는다.
+    var tWid = ctx.measureText(lastTxt).width;
+    ctx.save();
+    ctx.fillStyle = css('--bg', '#1a1f2b');
+    ctx.fillRect(padL + gw + 3, lastY - 7, tWid + 4, 14);
+    ctx.restore();
+    ctx.fillStyle = css('--price', '#3DD68C');
+    ctx.fillText(lastTxt, padL + gw + 5, lastY + 3);
 
     // x축 날짜 (앞·중간·끝)
     ctx.fillStyle = css('--dim', '#949fb1');

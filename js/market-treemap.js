@@ -28,16 +28,67 @@
     return { key: r.key, x: left, y: top, w: cw, h: ch, weight: r.weight, data: r.data };
   }
 
-  /* items: [{key, weight, data}] → [{key,x,y,w,h,weight,data}] */
+  /* 칸 최소 크기 — 390px 폭에서도 티커가 읽히는 한 변(px). 시가총액 비중이 이보다 작은
+     칸도 이 크기는 갖도록 넓이에 하한을 두고, 큰 칸이 그만큼 줄어든다(비중은 하한 위에서만 반영). */
+  var MIN_SIDE = 46;
+
+  /* 넓이 하한 — 작은 칸을 하한에 고정하고 남은 넓이를 나머지 칸이 원래 비중대로 나눠 갖는다.
+     자리가 모자라면(칸 수 × 하한 > 전체) 균등 배분으로 물러선다. */
+  function fitAreas(weights, totalArea, factor) {
+    var n = weights.length;
+    var minA = MIN_SIDE * MIN_SIDE * (factor || 2.6);
+    minA = Math.min(minA, totalArea / Math.max(1, n));
+    if (!n) return [];
+    if (minA * n > totalArea) minA = totalArea / n;
+    var fixed = [], wsum = 0, i;
+    for (i = 0; i < n; i++) { fixed.push(false); wsum += weights[i]; }
+    var areas = new Array(n);
+    for (var pass = 0; pass < 12; pass++) {
+      var rest = totalArea, restW = 0, fixedCount = 0;
+      for (i = 0; i < n; i++) {
+        if (fixed[i]) { rest -= minA; fixedCount++; } else restW += weights[i];
+      }
+      if (rest < 0) rest = 0;
+      var newly = 0;
+      for (i = 0; i < n; i++) {
+        if (fixed[i]) { areas[i] = minA; continue; }
+        areas[i] = restW > 0 ? rest * weights[i] / restW : rest / Math.max(1, n - fixedCount);
+        if (areas[i] < minA) { fixed[i] = true; newly++; }
+      }
+      if (!newly) break;
+      if (fixedCount + newly >= n) {           // 전부 하한이면 균등
+        for (i = 0; i < n; i++) areas[i] = totalArea / n;
+        break;
+      }
+    }
+    return areas;
+  }
+
+  /* items: [{key, weight, data}] → [{key,x,y,w,h,weight,data}]
+     모든 칸이 최소 한 변(MIN_SIDE) 이상이 되도록 넓이 하한을 키워 가며 배치한다.
+     비중만으로는 작은 칸이 실처럼 얇아지므로, 한 변이 모자라면 하한을 키우고
+     그래도 안 되면 균등 배치로 물러선다(큰 칸이 줄어드는 것은 감수 — 사용자가 정한 규칙). */
   function compute(items, width, height) {
     var clean = items.filter(function (it) { return isFinite(it.weight) && it.weight > 0; })
       .sort(function (a, b) { return b.weight - a.weight; });
     if (!clean.length || width <= 0 || height <= 0) return [];
-    var total = clean.reduce(function (s, it) { return s + it.weight; }, 0);
     var area = width * height;
-    var scaled = clean.map(function (it) {
-      return { key: it.key, area: it.weight / total * area, weight: it.weight, data: it.data };
-    });
+    var weights = clean.map(function (it) { return it.weight; });
+    var tries = [2.6, 4.5, 8, 0], rects = null;
+    for (var t = 0; t < tries.length; t++) {
+      var fitted = tries[t] ? fitAreas(weights, area, tries[t]) : weights.map(function () { return area / weights.length; });
+      var scaled = clean.map(function (it, i) {
+        return { key: it.key, area: fitted[i], weight: it.weight, data: it.data };
+      });
+      rects = place(scaled, width, height);
+      var thin = rects.some(function (r) { return Math.min(r.w, r.h) < MIN_SIDE - 0.6; });
+      if (!thin) break;
+    }
+    return rects || [];
+  }
+
+  /* 스쿼리파이 배치 — 넓이 목록을 폭·높이 안에 채운다. */
+  function place(scaled, width, height) {
     var out = [], x = 0, y = 0, wd = width, ht = height, i = 0;
     while (i < scaled.length && wd > EPS && ht > EPS) {
       var side = Math.min(wd, ht);
@@ -87,12 +138,37 @@
     } catch (e) { return fb; }
   };
 
-  /* -3% 이하 빨강 ~ 0 회색 ~ +3% 이상 초록 (TreemapView.colorOf). */
-  function colorOf(chg) {
+  /* 등락 → 칸 색. 고정 ±3%가 아니라 **이 화면에 보이는 칸들의 가장 큰 |등락률|** 을 눈금으로 쓴다
+     (분모 최소 0.5%). 프리마켓처럼 등락이 0.0x%p로 작은 날에도 0이 아닌 칸은
+     최소 세기(0.38) 이상 칠해져 상승 초록·하락 빨강이 눈에 보인다. 0%만 색 없음(패널 회색). */
+  var MIN_INK = 0.38;
+
+  /* 눈금 — 보이는 칸 중 가장 큰 |등락률|. 최소 0.5%.
+     등락률이 전부 0이면 0.5% (모두 회색). */
+  function scaleOf(cells) {
+    var max = 0;
+    (cells || []).forEach(function (c) {
+      var v = c && c.chg != null ? Math.abs(Number(c.chg)) : 0;
+      if (isFinite(v) && v > max) max = v;
+    });
+    return Math.max(0.5, max);
+  }
+
+  function inkOf(chg, scale) {
+    var v = Number(chg);
+    if (chg == null || !isFinite(v) || Math.abs(v) < 1e-9) return 0;
+    var den = (scale == null || !isFinite(scale) || scale <= 0) ? 3 : scale;
+    var t = Math.min(1, Math.abs(v) / den);
+    return MIN_INK + (1 - MIN_INK) * t;
+  }
+
+  function colorOf(chg, scale) {
     var flat = CSS('--panel2', '#2e3646');
     var green = '#1E7A5C', red = '#8E2A38';
-    var t = Math.max(-1, Math.min(1, (Number(chg) || 0) / 3));
-    return blend(flat, t >= 0 ? green : red, Math.abs(t));
+    var v = Number(chg) || 0;
+    var t = inkOf(v, scale);
+    if (!t) return blend(flat, flat, 0);
+    return blend(flat, v > 0 ? green : red, t);
   }
 
   /* 칸 안에 여러 줄을 적는 경우(반도체 종목 칸: 티커·회사 이름·등락률·시가총액).
@@ -175,10 +251,11 @@
     });
     var rects = compute(items, W, H);
     box.__rects = rects;
+    box.__scale = scaleOf(cells);
     var line = CSS('--bg', '#1a1f2b');
     for (var i = 0; i < rects.length; i++) {
       var r = rects[i], d = r.data;
-      ctx.fillStyle = colorOf(d.chg);
+      ctx.fillStyle = colorOf(d.chg, box.__scale);
       ctx.fillRect(r.x, r.y, r.w, r.h);
       ctx.strokeStyle = line;
       ctx.lineWidth = 1.2;
@@ -250,5 +327,6 @@
     }
   }
 
-  w.Treemap = { compute: compute, draw: draw, colorOf: colorOf, blend: blend };
+  w.Treemap = { compute: compute, draw: draw, colorOf: colorOf, blend: blend,
+    scaleOf: scaleOf, inkOf: inkOf, MIN_SIDE: MIN_SIDE, MIN_INK: MIN_INK };
 })(window);

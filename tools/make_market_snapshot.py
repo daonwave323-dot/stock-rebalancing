@@ -45,7 +45,7 @@ COLS = [
     "free_cash_flow", "dividend_yield_recent", "earnings_release_next_date",
 ]
 
-US_INDEX = [("QQQ", "나스닥100", "ETF 대체"), ("SPY", "S&P500", "ETF 대체"),
+US_INDEX = [("QQQ", "QQQ", "ETF 대체"), ("SPY", "S&P500", "ETF 대체"),
             ("DIA", "다우존스", "ETF 대체"), ("IWM", "러셀2000", "ETF 대체"),
             ("SOXX", "필라델피아 반도체", "ETF 대체")]
 US_TV = {"QQQ": "NASDAQ:QQQ", "SPY": "AMEX:SPY", "DIA": "AMEX:DIA",

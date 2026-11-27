@@ -13,10 +13,24 @@
 
   var st = {
     market: 'us', basis: 'regular', mapScope: 'all',
-    sort: 'cap', sortDir: 'desc',
+    sort: 'cap', sortDir: 'desc', range: '6m',
     maOff: localStorage.getItem('stockrebal.mkt.maoff') || '',
     timer: null, lastLive: 0, query: '', hits: [], probe: null, note: ''
   };
+
+  /* 큰 차트 기간 — 일봉을 이만큼 잘라 넘기고, 주·월·연봉 묶기는 기존 Candles.fold 가 한다. */
+  var RANGES = [['6m', '6개월', 126], ['1y', '1년', 252], ['5y', '5년', 1260]];
+  function rangeN(k) {
+    for (var i = 0; i < RANGES.length; i++) if (RANGES[i][0] === k) return RANGES[i][2];
+    return 126;
+  }
+  function rangeLabel(k) {
+    for (var i = 0; i < RANGES.length; i++) if (RANGES[i][0] === k) return RANGES[i][1];
+    return '6개월';
+  }
+
+  /* 5년을 고른 채로 들어오면 봉이 촘촘한 일봉 대신 주봉으로 연다(기존 Candles.fold 사용). */
+  function defaultSpan() { return st.range === '5y' ? 'week' : 'day'; }
 
   var SORTS = { value: '거래대금', gain: '상승', loss: '하락', cap: '시총' };
 
@@ -208,7 +222,7 @@
     }
     h += '<div class="note">' + (market === 'kr'
       ? '국내 지수는 코스피·코스닥입니다(네이버·트레이딩뷰 지연 시세).'
-      : '미국 지수 칸은 알파카·야후에 지수가 없어 ETF 대체값(QQQ·SPY·DIA·IWM·SOXX)입니다.') + '</div>';
+      : '나스닥100·VIX는 실제 지수(^NDX·^VIX)입니다. S&P500·다우존스·러셀2000·반도체는 지수 값이 없어 ETF(SPY·DIA·IWM·SOXX)로 대신합니다(ETF 대체). 선은 최근 6개월 종가입니다.') + '</div>';
     h += '</section>';
 
     /* ② 관심 종목 */
@@ -291,14 +305,10 @@
       h += '<div class="map-box" id="mapbox"><canvas aria-label="' + (stockMap
         ? '반도체 마켓맵 — 칸을 누르면 그 종목 상세가 열립니다'
         : '마켓맵 — 칸을 누르면 그 섹터의 업종이 열립니다') + '"></canvas></div>';
-      h += '<div class="map-legend"><span>−3%</span><span style="width:14px;height:8px;background:' + Treemap.colorOf(-3) + '"></span>' +
-        '<span style="width:14px;height:8px;background:' + Treemap.colorOf(-1) + '"></span>' +
-        '<span style="width:14px;height:8px;background:' + Treemap.colorOf(0) + '"></span>' +
-        '<span style="width:14px;height:8px;background:' + Treemap.colorOf(1) + '"></span>' +
-        '<span style="width:14px;height:8px;background:' + Treemap.colorOf(3) + '"></span><span>+3%</span></div>';
+      h += '<div class="map-legend">' + mapLegend(cells) + '</div>';
       h += '<div class="note">' + (stockMap
-        ? '칸 하나가 종목 하나입니다. 넓이는 종목 시가총액, 색은 등락률(±3%)이고, 칸을 누르면 그 종목 상세가 열립니다.'
-        : '칸 넓이는 섹터 합산 시가총액, 색은 등락률(±3%)입니다. 글자·숫자를 함께 적어 색만으로 읽지 않게 했습니다.') + '</div>';
+        ? '칸 하나가 종목 하나입니다. 넓이는 종목 시가총액(모든 칸이 읽히는 최소 크기 이상), 색은 등락률 — 이 화면에서 가장 큰 등락률을 기준으로 한 상대 눈금입니다. 칸을 누르면 그 종목 상세가 열립니다.'
+        : '칸 넓이는 섹터 합산 시가총액, 색은 등락률 — 이 화면에서 가장 큰 등락률을 기준으로 한 상대 눈금입니다. 글자·숫자를 함께 적어 색만으로 읽지 않게 했습니다.') + '</div>';
     }
     h += '</section>';
 
@@ -351,10 +361,13 @@
   }
 
   /* ------------------------------------------------------------ 지수 미니 차트
-     data/candles.json 의 최근 22봉 종가(약 한 달)를 한 줄로 그린다. 봉 자료는 이 파일 하나를
-     한 번만 받아 캐시한다(Mkt.loadCandles · Candles.loadFor). 봉이 없으면 선 없이 숫자만 남긴다.
-     색은 그 화면의 등락 색 규칙(국내 상승 빨강·하락 파랑 / 미국 상승 초록·하락 빨강)을 그대로 쓴다. */
-  var SPARK_N = 22;
+     data/candles.json 의 최근 6개월(약 126거래일) 종가를 면+선으로 그린다(기본 기간 6개월).
+     봉 자료는 이 파일 하나를 한 번만 받아 캐시한다(Mkt.loadCandles · Candles.loadFor).
+     live.json 에 그 심볼의 dayBars 가 있으면 날짜로 합쳐 더 새 값을 쓴다(^NDX·^VIX).
+     봉이 없으면 선 없이 숫자만 남긴다. 색은 그 화면의 등락 색 규칙(국내 상승 빨강·하락 파랑 /
+     미국 상승 초록·하락 빨강)을 그대로 쓴다. */
+  var SPARK_N = 126;      // 6개월(거래일)
+  var SPARK_H = 40;
 
   function toneColor(tone) {
     var el = document.createElement('span');
@@ -368,13 +381,18 @@
 
   function drawSparks(view, market, basis) {
     var list = view.querySelectorAll('canvas.spark');
-    if (!list.length || !w.Candles || !Candles.loadFor) return;
+    if (!list.length) return;
     list.forEach(function (cv) {
       var sym = cv.getAttribute('data-spark');
-      Candles.loadFor(sym).then(function (bars) {
+      var done = function (bars) {
         if (!document.body.contains(cv)) return;
         paintSpark(cv, sym, bars || [], market, basis);
-      }).catch(function () { /* 숫자는 그대로 둔다 */ });
+      };
+      if (w.Candles && Candles.loadFor) {
+        Candles.loadFor(sym).then(done).catch(function () { done([]); });
+      } else {
+        done([]);
+      }
     });
   }
 
@@ -390,19 +408,49 @@
     return toneColor(Mkt.tone(closes[closes.length - 1] - closes[0], market));
   }
 
-  function paintSpark(cv, sym, bars, market, basis) {
-    var closes = [];
-    (bars || []).slice(-SPARK_N).forEach(function (b) {
-      var v = b && b[4] != null ? Number(b[4]) : null;
-      if (v != null && !isNaN(v)) closes.push(v);
+  /* 종가 점 — 봉(일봉)과 live.json 의 dayBars 를 날짜로 합치고, 마지막에 정규장 값이 있으면 잇는다.
+     값이 없으면 지어내지 않는다. */
+  function sparkPoints(sym, bars, basis) {
+    var byDate = {}, out = [];
+    (bars || []).forEach(function (b) {
+      if (!b || b[4] == null) return;
+      var v = Number(b[4]);
+      if (isNaN(v)) return;
+      byDate[String(b[0]).slice(0, 10)] = v;
     });
-    var lk = Mkt.look(sym, basis);
-    var liveDot = false;
-    if (basis === 'after' && lk && lk.price != null && (lk.session === 'pre' || lk.session === 'post')) {
-      closes.push(Number(lk.price));      // 프리마켓이면 마지막 점을 실시간 값으로 잇는다
-      liveDot = true;
+    var live = Mkt.liveSym(sym);
+    var db = live && live.dayBars;
+    if (Array.isArray(db)) {
+      db.forEach(function (b) {
+        if (!b || !b.d || b.c == null) return;
+        var v = Number(b.c);
+        if (!isNaN(v)) byDate[String(b.d).slice(0, 10)] = v;   // 5분 갱신 값이 더 새 값
+      });
     }
-    var W = cv.clientWidth || (cv.parentNode && cv.parentNode.clientWidth) || 140, H = 34;
+    Object.keys(byDate).sort().forEach(function (d) { out.push({ d: d, c: byDate[d] }); });
+
+    var lk = Mkt.look(sym, basis);
+    var liveDot = false, liveReg = false;
+    if (lk && lk.price != null) {
+      var last = out.length ? out[out.length - 1].d : '';
+      var late = (live && live.regularCloseDate) || (lk.at ? String(lk.at).slice(0, 10) : '');
+      if (basis === 'after' && (lk.session === 'pre' || lk.session === 'post')) {
+        out.push({ d: 'live', c: Number(lk.price), live: true });   // 프리/애프터는 마지막 점으로 잇는다
+        liveDot = true;
+      } else if (late && late > last) {
+        out.push({ d: late, c: Number(lk.price) });                  // 오늘 정규장 종가가 봉에 아직 없을 때
+        liveReg = true;
+      }
+    }
+    return { pts: out, liveDot: liveDot, liveReg: liveReg };
+  }
+
+  function paintSpark(cv, sym, bars, market, basis) {
+    var sp = sparkPoints(sym, bars, basis);
+    var pts = sp.pts.slice(-SPARK_N);
+    var closes = pts.map(function (p) { return p.c; });
+    var liveDot = sp.liveDot;
+    var W = cv.clientWidth || (cv.parentNode && cv.parentNode.clientWidth) || 140, H = SPARK_H;
     var dpr = Math.min(2, w.devicePixelRatio || 1);
     cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
     cv.style.height = H + 'px';
@@ -414,38 +462,72 @@
       return;
     }
     cv.style.display = 'block';
+    cv.setAttribute('data-points', String(closes.length));   // 시험이 봉 수를 읽는다(6개월 = 126)
+    cv.setAttribute('data-range', String(closes.length ? pts[0].d + '~' + pts[pts.length - 1].d : ''));
 
     var lo = Math.min.apply(null, closes), hi = Math.max.apply(null, closes);
     if (hi <= lo) hi = lo + 1;
-    var padT = 3, padB = 4, gh = H - padT - padB;
+    var padT = 4, padB = 6, gh = H - padT - padB;
     var xf = function (i) { return (i / (closes.length - 1)) * (W - 3) + 1.5; };
     var yf = function (v) { return padT + (hi - v) / (hi - lo) * gh; };
 
-    // 기준선 — 기간 첫 종가(얇은 점선)
-    ctx.strokeStyle = 'rgba(255,255,255,.20)';
+    var col = lineColor(cv, market, closes);
+    var rgb = parseRGB(col);
+
+    // 1) 면 — 선 색을 위는 진하게, 아래는 바탕으로 사라지게
+    var grd = ctx.createLinearGradient(0, padT, 0, H);
+    grd.addColorStop(0, 'rgba(' + rgb + ',.30)');
+    grd.addColorStop(1, 'rgba(' + rgb + ',.02)');
+    ctx.beginPath();
+    pts.forEach(function (p, i) {
+      var px2 = xf(i), py = yf(p.c);
+      if (i === 0) ctx.moveTo(px2, py); else ctx.lineTo(px2, py);
+    });
+    ctx.lineTo(xf(closes.length - 1), H - padB + 2);
+    ctx.lineTo(xf(0), H - padB + 2);
+    ctx.closePath();
+    ctx.fillStyle = grd; ctx.fill();
+
+    // 2) 기간 첫 종가 — 얇은 점선(그 선보다 위면 기간 수익, 아래면 손실)
+    ctx.strokeStyle = 'rgba(255,255,255,.22)';
     ctx.lineWidth = 0.8;
     ctx.setLineDash([3, 3]);
     ctx.beginPath(); ctx.moveTo(0, yf(closes[0])); ctx.lineTo(W, yf(closes[0])); ctx.stroke();
     ctx.setLineDash([]);
 
-    var col = lineColor(cv, market, closes);
-    ctx.strokeStyle = col; ctx.lineWidth = 1.5; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    // 3) 선
+    ctx.strokeStyle = col; ctx.lineWidth = 1.6; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
     ctx.beginPath();
-    closes.forEach(function (v, i) {
-      var px2 = xf(i), py = yf(v);
+    pts.forEach(function (p, i) {
+      var px2 = xf(i), py = yf(p.c);
       if (i === 0) ctx.moveTo(px2, py); else ctx.lineTo(px2, py);
     });
     ctx.stroke();
 
+    // 4) 마지막 점
+    var lx = xf(closes.length - 1), ly = yf(closes[closes.length - 1]);
+    ctx.fillStyle = col;
+    ctx.beginPath(); ctx.arc(lx, ly, 2.6, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = 'rgba(26,31,43,.9)';
+    ctx.beginPath(); ctx.arc(lx, ly, 1, 0, Math.PI * 2); ctx.fill();
+
     if (liveDot) {
-      ctx.fillStyle = col;
-      ctx.beginPath(); ctx.arc(xf(closes.length - 1), yf(closes[closes.length - 1]), 2.3, 0, Math.PI * 2); ctx.fill();
       var cell = cv.parentNode, f = cell ? cell.querySelector('.f') : null;
       if (f && f.textContent.indexOf('● 실시간') < 0) {
         f.textContent = '● 실시간 · ' + f.textContent;   // 선의 마지막 점은 실시간 값
         f.setAttribute('title', '선의 마지막 점은 실시간(장외) 값입니다');
       }
     }
+  }
+
+  /* getComputedStyle 색(rgb/rgba/hex) → "r,g,b" */
+  function parseRGB(c) {
+    var s = String(c || '').trim();
+    var m = /^rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)/i.exec(s);
+    if (m) return [m[1], m[2], m[3]].map(function (v) { return Math.round(Number(v)); }).join(',');
+    var h = /^#([0-9a-f]{6})$/i.exec(s);
+    if (h) return [0, 2, 4].map(function (i) { return parseInt(h[1].slice(i, i + 2), 16); }).join(',');
+    return '61,214,140';
   }
 
   function mapCells(market, basis, scope) {
@@ -478,6 +560,17 @@
   function chgShort(v) {
     if (v == null || isNaN(v)) return '—';
     return (v > 0 ? '+' : '') + Number(v).toFixed(2) + '%';
+  }
+
+  /* 색 눈금 안내 — 고정 ±3%가 아니라 그 화면의 가장 큰 등락률을 눈금으로 쓴다. */
+  function mapLegend(cells) {
+    var scl = w.Treemap && Treemap.scaleOf ? Treemap.scaleOf(cells) : 3;
+    var sw = function (v) {
+      return '<span style="width:14px;height:8px;background:' + Treemap.colorOf(v, scl) + '"></span>';
+    };
+    var step = scl / 2;
+    return '<span>' + chgShort(-scl) + '</span>' + sw(-scl) + sw(-step) + sw(0) + sw(step) + sw(scl) +
+      '<span>' + chgShort(scl) + '</span><span>· 눈금은 이 화면 최대 등락률</span>';
   }
 
   function mapNote(n) {
@@ -776,8 +869,8 @@
     h += '<section class="panel"><div class="card-h"><h2>캔들 차트</h2><span class="right"><span class="src" id="cspan">일봉</span></span></div>';
     h += '<div class="mkt-tabs mini" id="cspans">' +
       Candles.spans.map(function (s) {
-        return '<button class="tab' + (s.key === 'day' ? ' on' : '') + '" data-cspan="' + s.key + '" type="button">' + s.label + '</button>';
-      }).join('') + '</div>';
+        return '<button class="tab' + (s.key === defaultSpan() ? ' on' : '') + '" data-cspan="' + s.key + '" type="button">' + s.label + '</button>';
+      }).join('') + '</div>' + rangeRow();
     h += '<div class="chart-box" id="cbox" style="margin-top:8px"><canvas></canvas></div>' +
       '<div class="chart-readout note" style="margin-top:6px">차트를 짚으면 그 봉의 값이 나옵니다.</div>' +
       '<div class="ma-legend" id="maleg"></div>' +
@@ -820,6 +913,7 @@
     view.innerHTML = h;
     bindTop(view, false);
     bindDetail(view, sym, q);
+    bindRange(view, sym, q);
     bindHearts(view);
 
     var maOff = maOffObj();
@@ -868,6 +962,43 @@
     return o;
   }
 
+  function currentSpan(view) {
+    var b = view.querySelector('[data-cspan].on');
+    return b ? b.getAttribute('data-cspan') : 'day';
+  }
+  function markSpan(view, key) {
+    view.querySelectorAll('[data-cspan]').forEach(function (x) {
+      x.classList.toggle('on', x.getAttribute('data-cspan') === key);
+    });
+  }
+
+  /* 기간 줄 — 6개월·1년·5년. 5년은 봉이 저으므로 주봉을 기본으로 보여 준다(이미 있는 Candles 모듈 사용). */
+  function rangeRow() {
+    return '<div class="mkt-tabs mini" id="cranges" style="margin-top:6px">' +
+      RANGES.map(function (r) {
+        return '<button class="tab' + (st.range === r[0] ? ' on' : '') + '" data-range="' + r[0] +
+          '" type="button" aria-pressed="' + (st.range === r[0]) + '">' + r[1] + '</button>';
+      }).join('') + '</div>';
+  }
+
+  function bindRange(view, sym, q) {
+    view.querySelectorAll('[data-range]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        var k = b.getAttribute('data-range');
+        if (k === st.range) return;
+        st.range = k;
+        var span = currentSpan(view);
+        if (k === '5y' && span === 'day') { span = 'week'; markSpan(view, 'week'); }
+        view.querySelectorAll('[data-range]').forEach(function (x) {
+          var on = x === b;
+          x.classList.toggle('on', on);
+          x.setAttribute('aria-pressed', on);
+        });
+        renderChart(sym, q, Candles.cache && Candles.cache[sym], span, maOffObj());
+      });
+    });
+  }
+
   function renderChart(sym, q, bars, spanKey, maOff) {
     var view = document.getElementById('view');
     if (!view) return;
@@ -877,6 +1008,9 @@
     var all = bars || [];
     var sp = Candles.spanOf(spanKey);
     var use = Candles.usable(all, spanKey);
+    // 기간(6개월·1년·5년) — 일봉을 이만큼 잘라 넘긴다. 주·월·연봉 묶기는 Candles.fold 가 한다.
+    var n = rangeN(st.range);
+    var picked = all.length > n ? all.slice(all.length - n) : all;
     var note = view.querySelector('#cnote');
     if (!all.length) {
       box.querySelector('canvas').getContext('2d');
@@ -886,9 +1020,9 @@
       if (leg0) leg0.innerHTML = '';
       return;
     }
-    var res = Candles.draw(box, { bars: all, span: spanKey, market: q.market, maOff: maOff, height: 260, cur: cur });
+    var res = Candles.draw(box, { bars: picked, span: spanKey, market: q.market, maOff: maOff, height: 260, cur: cur, window: 0 });
     if (note) {
-      note.textContent = res.bars.length + '개 ' + sp.label + ' · ' + (use.ok ? '' :
+      note.textContent = res.bars.length + '개 ' + sp.label + ' · ' + rangeLabel(st.range) + ' 구간 · ' + (use.ok ? '' :
         '이 봉 단위는 자료가 ' + use.count + '개뿐입니다(약 ' + (sp.need) + '개 필요). 봉을 지어내지 않습니다. ') +
         '이동평균선 ' + sp.ma.join('/') + ' ' + sp.unit;
     }
@@ -924,12 +1058,12 @@
       '<span class="right">' + (idx ? px(idx.price, market === 'kr' ? 'KRW' : 'USD') + ' ' + chg(idx.chg, market) : '') + '</span></div>';
     h += '<div class="mkt-tabs mini" id="cspans">' +
       Candles.spans.map(function (s) {
-        return '<button class="tab' + (s.key === 'day' ? ' on' : '') + '" data-cspan="' + s.key + '" type="button">' + s.label + '</button>';
-      }).join('') + '</div>';
+        return '<button class="tab' + (s.key === defaultSpan() ? ' on' : '') + '" data-cspan="' + s.key + '" type="button">' + s.label + '</button>';
+      }).join('') + '</div>' + rangeRow();
     h += '<div class="chart-box" id="cbox" style="margin-top:8px"><canvas></canvas></div>' +
       '<div class="chart-readout note" style="margin-top:6px">차트를 짚으면 그 봉의 값이 나옵니다.</div>' +
       '<div class="ma-legend" id="maleg"></div><div class="note" id="cnote"></div>' +
-      '<div class="note">봉은 나스닥·네이버 일봉이고, 주·월·연봉은 브라우저가 같은 규칙으로 묶습니다. 이동평균선은 그 봉 단위의 종가로 계산합니다.</div></section>';
+      '<div class="note">봉은 야후 일봉(지수·주요 종목)이고, 주·월·연봉은 브라우저가 같은 규칙으로 묶습니다. 이동평균선은 그 봉 단위의 종가로 계산합니다.</div></section>';
     view.innerHTML = h;
     bindTop(view, false);
     var q = { cur: market === 'kr' ? 'KRW' : 'USD', market: market };
@@ -940,8 +1074,9 @@
         renderChart(sym, q, Candles.cache && Candles.cache[sym], b.getAttribute('data-cspan'), maOffObj());
       });
     });
+    bindRange(view, sym, q);
     Candles.loadFor(sym).then(function (bars) {
-      renderChart(sym, q, bars, 'day', maOffObj());
+      renderChart(sym, q, bars, defaultSpan(), maOffObj());
     });
     stopTimer();
   }

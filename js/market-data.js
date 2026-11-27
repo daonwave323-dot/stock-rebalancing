@@ -548,28 +548,42 @@
     return out;
   };
 
-  /* 지수 — 스냅샷의 지수 칸 값. live 에 ^NDX/^VIX 가 있으면 같이 보여 준다. */
+  /* 지수 — 스냅샷의 지수 칸 값. 나스닥100(^NDX)·VIX 는 live 의 실제 지수 값을 쓴다. */
   M.indices = function (market, basis) {
     var mk = (M.snap && M.snap.markets && M.snap.markets[market]) || {};
     var out = (mk.indices || []).map(function (x) {
       var live = market === 'us' ? M.liveSym(x.sym) : null;
       var price = x.price, chg = x.chg, at = M.snap.generatedAt, note = '스냅샷';
       if (live) {
-        var lk = basis === 'after'
-          ? ((live.session === 'pre' || live.session === 'post') ? live.sessionPrice : null)
-          : live.regularClose;
-        if (lk != null) { price = lk; at = live.sessionTime || live.regularCloseTime; note = live.sessionLabel || '5분 갱신'; }
-        if (live.changePct != null) chg = live.changePct;
+        // 보는 값(정규장/프리마켓)과 같은 세션의 값만 적는다 — 장외 등락을 정규장 칸에 섮지 않는다.
+        if (basis === 'after' && (live.session === 'pre' || live.session === 'post')) {
+          price = live.sessionPrice != null ? live.sessionPrice : price;
+          chg = live.sessionChangePct != null ? live.sessionChangePct : live.changePct;
+          at = live.sessionTime || live.regularCloseTime;
+          note = live.sessionLabel || '프리마켓';
+        } else if (live.regularClose != null) {
+          price = live.regularClose;
+          chg = live.regularChangePct != null ? live.regularChangePct : x.chg;
+          at = live.regularCloseTime;
+          note = '정규장';
+        }
       }
       return { sym: x.sym, name: x.name, proxy: x.proxy, price: price, chg: chg, at: at, note: note };
     });
     if (market === 'us') {
-      [['^NDX', '나스닥100 지수'], ['^VIX', 'VIX 변동성']].forEach(function (p) {
-        var l = M.liveSym(p[0]);
-        if (!l) return;
-        out.push({ sym: p[0], name: p[1], proxy: '5분 갱신', price: l.last, chg: l.changePct,
-          at: l.lastTime, note: l.sessionLabel || '' });
-      });
+      /* 지수는 장외 거래가 없어 프리마켓 기준에서도 정규장 확정값을 그대로 보여 준다. */
+      var real = function (sym, name) {
+        var l = M.liveSym(sym);
+        if (!l) return null;
+        return { sym: sym, name: name, proxy: '',
+          price: l.regularClose != null ? l.regularClose : l.last,
+          chg: l.regularChangePct != null ? l.regularChangePct : l.changePct,
+          at: l.regularCloseTime || l.lastTime, note: '지수 · 5분 갱신' };
+      };
+      var ndx = real('^NDX', '나스닥100');
+      var vix = real('^VIX', 'VIX');
+      if (ndx) out.unshift(ndx);
+      if (vix) out.push(vix);
     }
     return out;
   };

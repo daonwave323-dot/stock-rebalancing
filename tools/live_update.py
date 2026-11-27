@@ -18,6 +18,7 @@
 0이 아닌 코드로 끝난다. 관심 종목이 일부 실패하면 그 심볼만 이전 값을 이어 쓰고 `partial` 에 적는다.
 
   python3 tools/live_update.py                 # data/live.json 갱신
+  python3 tools/live_update.py --candles       # data/candles.json 일봉을 야후 5년으로 다시 받기
   python3 tools/live_update.py --dry-run       # 파일 쓰지 않고 결과만 출력
   python3 tools/live_update.py --now 2026-11-28T03:00:00Z   # 시각 고정(휴장일 점검용)
 """
@@ -26,6 +27,7 @@ import http.cookiejar
 import json
 import math
 import os
+import re
 import sys
 import time
 import urllib.error
@@ -491,6 +493,40 @@ def ohlc_tail(js, n=23):
     return rows[-n:]
 
 
+def ohlc_rows(js, n=None):
+    """chart 응답 → data/candles.json 형식의 일봉 [[날짜, 시, 고, 저, 종, 거래량], ...].
+
+    값이 모자란 봉(종가 없음)은 0으로 채우지 않고 목록에서 뺀다. n 이 있으면 마지막 n개만.
+    """
+    try:
+        r = js["chart"]["result"][0]
+        stamps = r.get("timestamp") or []
+        q = ((r.get("indicators") or {}).get("quote") or [{}])[0]
+        opens, highs, lows, closes = (q.get("open") or [], q.get("high") or [],
+                                      q.get("low") or [], q.get("close") or [])
+        vols = q.get("volume") or []
+    except Exception:
+        return []
+
+    def at(arr, i):
+        return arr[i] if i < len(arr) else None
+
+    out = []
+    for i, t in enumerate(stamps):
+        c = at(closes, i)
+        if c is None:
+            continue
+        o, h, l = at(opens, i), at(highs, i), at(lows, i)
+        o = c if o is None else o
+        h = max(o, c) if h is None else h
+        l = min(o, c) if l is None else l
+        v = at(vols, i)
+        out.append([datetime.fromtimestamp(t, tz=timezone.utc).date().isoformat(),
+                    round(float(o), 4), round(float(h), 4), round(float(l), 4),
+                    round(float(c), 4), round(float(v), 1) if v is not None else None])
+    return out[-n:] if n else out
+
+
 def iso(ts):
     if ts is None:
         return None
@@ -762,6 +798,108 @@ def load_watchlist(path):
     return out
 
 
+def read_json(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def write_candles(path, doc):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(doc, f, ensure_ascii=False, separators=(",", ":"))
+        f.write("\n")
+    os.replace(tmp, path)
+
+
+def merge_candles(path, entries):
+    """지수(^NDX·^VIX) 봉만 data/candles.json 에 덮어쓴다. 다른 심볼은 건드리지 않는다."""
+    doc = read_json(path)
+    syms = doc.get("symbols") if isinstance(doc.get("symbols"), dict) else {}
+    changed = False
+    for k, bars in (entries or {}).items():
+        if bars and len(bars) >= 2 and syms.get(k) != bars:
+            syms[k] = bars
+            changed = True
+    if not changed:
+        return 0
+    now = datetime.now(tz=timezone.utc)
+    doc.setdefault("note", "일봉 [날짜, 시가, 고가, 저가, 종가, 거래량]. 주·월·연봉은 브라우저가 묶는다.")
+    doc["symbols"] = syms
+    doc["asOf"] = now.strftime("%Y-%m-%d")
+    doc["generatedAt"] = now.isoformat(timespec="seconds")
+    write_candles(path, doc)
+    return len(syms)
+
+
+def yahoo_key(key, info=None):
+    """data/candles.json 키 → 야후 심볼. 국내 6자리는 시장(보드)에 따라 .KS/.KQ."""
+    if key == "KOSPI":
+        return "^KS11"
+    if key == "KOSDAQ":
+        return "^KQ11"
+    if re.fullmatch(r"\d{6}", key or ""):
+        board = ((info or {}).get("board") or (info or {}).get("exch") or "")
+        if "KOSDAQ" in board:
+            return key + ".KQ"
+        if "KOSPI" in board or board == "KRX":
+            return key + ".KS"
+        return key + ".KS"
+    return key
+
+
+def refresh_candles(root, out_path):
+    """data/candles.json 의 심볼을 야후 일봉(range=5y)으로 다시 받는다.
+
+    이미 있는 심볼 목록을 그대로 쓰고 ^NDX·^VIX 를 더한다. 받지 못한 심볼은 기존 봉을 그대로 둔다.
+    주·월·연봉은 브라우저(js/market-candles.js)가 같은 일봉에서 묶으므로 여기서 만들지 않는다.
+    """
+    old = read_json(out_path)
+    old_syms = old.get("symbols") if isinstance(old.get("symbols"), dict) else {}
+    snap = read_json(os.path.join(root, "data", "market.json"))
+    info = snap.get("symbols") if isinstance(snap.get("symbols"), dict) else {}
+    keys = list(old_syms.keys())
+    for k in ("^NDX", "^VIX"):
+        if k not in keys:
+            keys.append(k)
+    fx = Fetcher()
+    out, failed = {}, []
+    for key in keys:
+        ys = yahoo_key(key, info.get(key))
+        tries = [ys]
+        if re.fullmatch(r"\d{6}", key or ""):
+            tries.append(key + (".KQ" if ys.endswith(".KS") else ".KS"))
+        bars = []
+        for sym in tries:
+            try:
+                js = fx.chart(sym, rng="5y", interval="1d")
+                bars = ohlc_rows(js)
+                if len(bars) >= 60:
+                    break
+                bars = []
+            except Exception as e:  # noqa: BLE001
+                print("  봉 실패", key, sym, str(e)[:80], file=sys.stderr)
+                bars = []
+        if bars:
+            out[key] = bars
+            print("  봉", key, len(bars), bars[0][0], "~", bars[-1][0])
+        else:
+            failed.append(key)
+            if old_syms.get(key):
+                out[key] = old_syms[key]     # 받지 못하면 기존 봉을 지우지 않는다
+    now = datetime.now(tz=timezone.utc)
+    doc = {"asOf": now.strftime("%Y-%m-%d"), "generatedAt": now.isoformat(timespec="seconds"),
+           "note": "일봉 [날짜, 시가, 고가, 저가, 종가, 거래량]. 주·월·연봉은 브라우저가 묶는다.",
+           "symbols": out}
+    write_candles(out_path, doc)
+    print("candles.json", len(out), "심볼 ·", os.path.getsize(out_path) // 1024, "KB · 실패", len(failed),
+          ("(" + ", ".join(failed[:8]) + ")") if failed else "")
+    return 0
+
+
 def main(argv=None):
     here = os.path.dirname(os.path.abspath(__file__))
     root = os.path.dirname(here)
@@ -771,7 +909,13 @@ def main(argv=None):
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--now", default=None, help="점검용: ISO 시각을 지금으로 고정")
     ap.add_argument("--only", default=None, help="점검용: 이 심볼들만(쉼표)")
+    ap.add_argument("--candles", action="store_true",
+                    help="data/candles.json 의 일봉을 야후 5년으로 다시 받고 끝낸다(지수·종목 공통)")
+    ap.add_argument("--candles-out", default=os.path.join(root, "data", "candles.json"))
     args = ap.parse_args(argv)
+
+    if args.candles:
+        return refresh_candles(root, args.candles_out)
 
     now_utc = datetime.now(tz=timezone.utc)
     if args.now:
@@ -824,6 +968,7 @@ def main(argv=None):
     daily = {}
     metas = {}
     tails = {}
+    charts = {}
     for s in need_daily:
         try:
             js = fx.chart(s, rng="5y", interval="1d")
@@ -833,6 +978,7 @@ def main(argv=None):
             daily[s] = bars
             metas[s] = meta
             tails[s] = ohlc_tail(js, 23)
+            charts[s] = js
         except Exception as e:  # noqa: BLE001
             errors.append(s + ": " + str(e)[:120])
 
@@ -882,12 +1028,15 @@ def main(argv=None):
             return 1
 
     # ^NDX — 점수는 없지만 지금 지수와 낙폭을 담는다
+    index_candles = {}
     try:
         js = fx.chart("^NDX", rng="5y", interval="1d")
         bars, meta = bars_from_chart(js)
         if len(bars) < 250:
             raise RuntimeError("일봉 " + str(len(bars)) + "개")
         ndx = build_symbol(now_et, "^NDX", quotes.get("^NDX") or {}, bars, meta, fxinfo)
+        ndx["dayBars"] = ohlc_tail(js, 126)       # 카드 미니차트(6개월) 재료
+        index_candles["^NDX"] = ohlc_rows(js)     # 캔들 차트·큰 차트(5년)
         symbols_out["^NDX"] = ndx
     except Exception as e:  # noqa: BLE001
         errors.append("^NDX: " + str(e)[:120])
@@ -898,6 +1047,9 @@ def main(argv=None):
         vq = quotes.get("^VIX") or {}
         vmeta = metas.get("^VIX") or {}
         v = build_symbol(now_et, "^VIX", vq, vix_series, vmeta, fxinfo)
+        if charts.get("^VIX"):
+            v["dayBars"] = ohlc_tail(charts["^VIX"], 126)
+            index_candles["^VIX"] = ohlc_rows(charts["^VIX"])
         vst = vix_stats([c for _, c in confirmed_series(vix_series, now_et)])
         if vst:
             v["vix"] = {"last": round(vst["last"], 2), "ma50": round(vst["ma50"], 2),
@@ -1037,6 +1189,16 @@ def main(argv=None):
     with open(tmp, "w", encoding="utf-8") as f:
         f.write(text)
     os.replace(tmp, args.out)
+
+    # 지수 봉(^NDX·^VIX)은 data/candles.json 에도 덮어쓴다(큰 차트 5년용).
+    # 5분 워크플로는 data/live.json 만 커밋하므로, 화면의 6개월 미니차트는
+    # live.json 의 dayBars 를 더 새 값으로 합쳐 쓴다(값이 없으면 지어내지 않는다).
+    try:
+        n = merge_candles(os.path.join(root, "data", "candles.json"), index_candles)
+        if n:
+            print("candles.json 지수 봉 갱신(^NDX·^VIX)")
+    except Exception as e:  # noqa: BLE001
+        errors.append("candles: " + str(e)[:120])
 
     tq = symbols_out.get("TQQQ", {})
     print("live.json: %d심볼 (국장 %d) · %s · TQQQ %s(%s) 점수 %s / 실시간 %s · partial %d · calls %d"
