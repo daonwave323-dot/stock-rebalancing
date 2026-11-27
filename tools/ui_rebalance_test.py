@@ -146,6 +146,8 @@ def main():
         us = rows_of(pg)
         check('미장 시세가 채워졌다', us and us[0]['price'] > 0, us[0]['price'] if us else None)
         check('미장 평가금액에 $ 표기', us and '$' in us[0]['value'], us[0]['value'] if us else '')
+        check('평가손익 부호가 $ 앞에 온다', us and (us[0]['pl'].lstrip().startswith('-$') or us[0]['pl'].lstrip().startswith('+$')),
+              us[0]['pl'] if us else '')
 
         # 3) 국장 탭 — 빈 상태, 환율 표시
         pg.click('[data-rebmkt="kr"]')
@@ -295,13 +297,19 @@ def main():
         pg.screenshot(path=os.path.join(SHOTS, 'reb-kr-fallback.png'), full_page=True)
 
         # 14) 국장 한글 이름 찾기
-        pg.fill('#krFind', '삼성')
-        try:
-            pg.wait_for_selector('#krFindAc button', timeout=8000)
-        except Exception:
-            pass
-        pg.wait_for_timeout(300)
-        hits = pg.eval_on_selector_all('#krFindAc button', "els => els.slice(0,4).map(e => e.textContent.trim())")
+        hits = []
+        for attempt in range(3):
+            pg.fill('#krFind', '')
+            pg.fill('#krFind', '삼성')
+            try:
+                pg.wait_for_selector('#krFindAc button', timeout=6000)
+            except Exception:
+                pass
+            pg.wait_for_timeout(300)
+            hits = pg.eval_on_selector_all('#krFindAc button', "els => els.slice(0,4).map(e => e.textContent.trim())")
+            if hits:
+                break
+            print('   (찾기 재시도', attempt + 1, pg.eval_on_selector('#krFindAc', 'e => e.textContent.slice(0, 80)'), ')')
         check('국장 종목을 한글 이름으로 찾는다', len(hits) > 0 and '삼성' in ''.join(hits), hits)
         if hits:
             pg.click('#krFindAc button')

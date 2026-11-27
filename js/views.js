@@ -1278,7 +1278,8 @@
       if (c === 'KRW') return F.int(v) + '원';
       var n = Number(v);
       var d = Math.abs(n) < 1000 ? 2 : 0;
-      return '$' + n.toLocaleString('ko-KR', { minimumFractionDigits: d, maximumFractionDigits: d });
+      var body = Math.abs(n).toLocaleString('ko-KR', { minimumFractionDigits: d, maximumFractionDigits: d });
+      return (n < 0 ? '-$' : '$') + body;   /* -$1,115 처럼 부호를 $ 앞에 */
     }
     function pxText(v, c) {
       if (v === null || v === undefined || v === '' || isNaN(v)) return '—';
