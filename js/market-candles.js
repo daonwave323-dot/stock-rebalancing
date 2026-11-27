@@ -1,5 +1,6 @@
 /* 캔들 차트 — 원본 core/Candles.kt(CandleSpan) · view/Candles.kt(CandleChartView) 규칙.
    일봉 자료를 브라우저에서 주·월·연봉으로 묶고, 이동평균선을 같은 창에서 계산한다.
+   담긴 기간(무아 님 결정 2026-11-28): 일봉 최근 1년(약 252거래일) + 주봉 5년. 5년 기간 탭은 주봉을 쓴다.
    자료가 모자란 봉 단위는 **모자란다고 적는다**(봉을 지어내지 않는다). */
 (function (w) {
   'use strict';
@@ -241,10 +242,13 @@
     return { ok: bars.length >= sp.need, count: bars.length, need: sp.need, span: sp };
   }
 
-  /* 봉 자료는 따로 한 파일(data/candles.json, 약 1MB)에 있어 차트를 열 때 한 번만 받는다.
-     파일의 키는 스냅샷 표기(`035720`)이고 관심 목록·5분 갱신은 야후 표기(`035720.KS`)를 쓴다 —
-     양쪽 표기를 같은 키로 맞춰 찾는다. */
-  var cache = {};
+  /* 봉 자료는 두 파일로 나뉘어 있다(무아 님 결정 2026-11-28).
+       data/candles-index.json — 증시 탭 첫 화면의 지수 카드 미니차트가 쓰는 지수·대표 ETF 9종
+       data/candles.json      — 그 밖의 종목 봉. 종목 상세·큰 차트를 열 때만 받는다
+     두 파일 모두 일봉 최근 1년(symbols) + 주봉 5년(weekly)이고, 키 표기는 스냅샷 표기(`035720`)다.
+     관심 목록·5분 갱신은 야후 표기(`035720.KS`)를 쏘므로 양쪽 표기를 같은 키로 맞춰 찾는다. */
+  var cache = {};        // 일봉(최근 1년)
+  var cacheW = {};       // 주봉(5년) — 5년 기간 탭이 쓰는 봉
   function candleKey(sym) {
     var s = String(sym || '').trim();
     return (w.Mkt && Mkt.baseSym) ? Mkt.baseSym(s) : s;
@@ -256,15 +260,28 @@
     return syms[s] || syms[s.toUpperCase()] || syms[k] || syms[k.toUpperCase()] ||
       syms[k + '.KS'] || syms[k + '.KQ'] || null;
   }
-  function loadFor(sym) {
+  function absorb(js, sym, key) {
+    var d = barsOf(js && js.symbols, sym) || [];
+    var wk = barsOf(js && js.weekly, sym) || [];
+    if (d.length) cache[key] = d;      // 빈 결과는 담아 두지 않는다(자료가 늦게 와도 다시 찾게)
+    if (wk.length) cacheW[key] = wk;
+    return d;
+  }
+  /* opts.spark — 미니차트(지수 카드). 작은 파일만 본다(종목 봉 큰 파일을 당기지 않게).
+     그 밖에는 작은 파일에 없으면 큰 파일(종목 봉)을 받는다. */
+  function loadFor(sym, opts) {
     var key = candleKey(sym);
     if (cache[key]) return Promise.resolve(cache[key]);
     if (!w.Mkt) return Promise.resolve([]);
-    return Mkt.loadCandles().then(function (js) {
-      var bars = barsOf(js && js.symbols, sym) || [];
-      if (bars.length) cache[key] = bars;   // 빈 결과는 담아 두지 않는다(자료가 늦게 와도 다시 찾게)
-      return bars;
+    var spark = !!(opts && opts.spark);
+    return Mkt.loadCandleIndex().then(function (js) {
+      var d = absorb(js, sym, key);
+      if (d.length || spark) return d;
+      return Mkt.loadCandles().then(function (full) { return absorb(full, sym, key); });
     });
+  }
+  function weeklyOf(sym) {
+    return cacheW[candleKey(sym)] || null;
   }
 
   function drawNote(box, text) {
@@ -289,5 +306,6 @@
   }
 
   w.Candles = { spans: SPANS, draw: draw, fold: fold, usable: usable, spanOf: spanOf,
-    loadFor: loadFor, cache: cache, drawNote: drawNote, key: candleKey }; 
+    loadFor: loadFor, cache: cache, weeks: cacheW, weeklyOf: weeklyOf,
+    drawNote: drawNote, key: candleKey }; 
 })(window);

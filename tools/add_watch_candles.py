@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
-"""관심 목록 종목의 일봉을 data/candles.json 에 더한다.
+"""관심 목록 종목의 봉을 봉 파일에 더한다.
 
 `make_market_snapshot.py` 는 시가총액 상위 종목만 봉을 담기 때문에, 관심 목록에 담은
 ETF(TQQQ·SOXL 등)·중소형 종목은 종목 상세에서 차트가 비었다. 이 스크립트는
 `data/watchlist.json` 과 `data/live.json` 의 심볼 중 봉이 없는 종목만 공개 시세 창구
 (미장=나스닥, 국장=네이버)에서 받아 더한다. 받은 봉이 없으면 그 심볼만 빠진다(지어내지 않는다).
+
+담는 기간은 candle_periods 규칙 — 일봉 최근 1년(약 252거래일) + 주봉 5년.
+파일은 data/candles.json(종목) / data/candles-index.json(지수·대표 ETF)으로 나뉘어 쓰인다.
 
   python3 tools/add_watch_candles.py              # 빠진 종목만 받아 더한다
   python3 tools/add_watch_candles.py --dry-run    # 파일 쓰지 않고 결과만
@@ -16,6 +19,7 @@ import os
 import re
 import sys
 import time
+from datetime import datetime, timezone
 
 
 def _load_snapshot_tools():
@@ -83,9 +87,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
-    path = os.path.join(ROOT, "data", "candles.json")
-    doc = read_json(path, {"symbols": {}})
-    syms = doc.get("symbols") or {}
+    import candle_periods as cp
+    syms = cp.load_pairs(ROOT)
     keys = {k.upper() for k in syms}
     want = wanted_symbols()
     missing = [s for s in want if s.upper() not in keys and base(s).upper() not in keys]
@@ -99,23 +102,19 @@ def main():
             print("  봉 실패", s, str(e)[:100])
             bars = []
         if bars:
-            syms[base(s)] = bars          # 국장은 스냅샷과 같은 6자리 키로 담는다
+            syms[base(s)] = cp.slim(bars)   # 국장은 스냅샷과 같은 6자리 키로 담는다
             added += 1
-            print("  봉", s, len(bars), bars[-1][0])
+            print("  봉", s, "일", len(syms[base(s)][0]), "· 주", len(syms[base(s)][1]))
         else:
             print("  봉 없음", s)
         time.sleep(0.35)
     print("추가 %d 심볼" % added)
     if args.dry_run or not added:
         return 0
-    doc["symbols"] = syms
-    doc["note"] = "일봉 [날짜, 시가, 고가, 저가, 종가, 거래량]. 주·월·연봉은 브라우저가 묶는다."
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(doc, f, ensure_ascii=False, separators=(",", ":"))
-        f.write("\n")
-    os.replace(tmp, path)
-    print("candles.json", len(syms), "심볼", os.path.getsize(path) // 1024, "KB")
+    now = datetime.now(tz=timezone.utc)
+    info = cp.write_files(ROOT, syms, now.strftime("%Y-%m-%d"), now.isoformat(timespec="seconds"))
+    print("candles.json", info["full"][1], "심볼", info["full"][2] // 1024, "KB",
+          "· candles-index.json", info["index"][1], "심볼", info["index"][2] // 1024, "KB")
     return 0
 
 

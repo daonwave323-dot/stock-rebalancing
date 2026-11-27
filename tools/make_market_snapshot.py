@@ -253,7 +253,7 @@ def won_num(s):
 
 
 
-def nasdaq_bars(sym, assetclass, days=400):
+def nasdaq_bars(sym, assetclass, days=1850):
     today = datetime.now(timezone.utc).date()
     start = today - timedelta(days=days)
     url = ("https://api.nasdaq.com/api/quote/%s/historical?assetclass=%s&fromdate=%s&todate=%s&limit=%d"
@@ -282,7 +282,7 @@ def nasdaq_bars(sym, assetclass, days=400):
     return out
 
 
-def naver_bars(sym, days=400):
+def naver_bars(sym, days=1850):
     today = datetime.now(timezone.utc).date()
     start = today - timedelta(days=days)
     url = ("https://api.finance.naver.com/siseJson.naver?symbol=%s&requestType=1&startTime=%s&endTime=%s&timeframe=day"
@@ -460,7 +460,8 @@ def main():
 
     # 캔들 — 지수·상위 종목. 값이 없으면 그 심볼만 빠진다(지어내지 않는다).
     if not args.no_candles:
-        candles = {}
+        import candle_periods as cp
+        pairs = {}
         targets = []
         for r in us_idx:
             targets.append((r["sym"], "etf", r["sym"]))
@@ -491,23 +492,19 @@ def main():
                 else:
                     bars = nasdaq_bars(sym, "stocks")
                 if bars:
-                    candles[key] = bars
-                    print("  봉", key, len(bars))
+                    pairs[key] = cp.slim(bars)
+                    print("  봉", key, "일", len(pairs[key][0]), "· 주", len(pairs[key][1]))
                 else:
                     print("  봉 없음", key)
             except Exception as e:  # noqa: BLE001
                 print("  봉 실패", key, str(e)[:80])
                 continue
             time.sleep(0.35)
-        cd = {"asOf": doc["asOf"], "generatedAt": doc["generatedAt"],
-              "note": "일봉 [날짜, 시가, 고가, 저가, 종가, 거래량]. 주·월·연봉은 브라우저가 묶는다.",
-              "symbols": candles}
-        out = os.path.join(ROOT, "data", "candles.json")
-        with open(out + ".tmp", "w", encoding="utf-8") as f:
-            json.dump(cd, f, ensure_ascii=False, separators=(",", ":"))
-            f.write("\n")
-        os.replace(out + ".tmp", out)
-        print("candles.json", len(candles), "심볼", os.path.getsize(out) // 1024, "KB")
+        # 담는 기간은 candle_periods 규칙 — 일봉 최근 1년(약 252거래일) + 주봉 5년.
+        # 지수·대표 ETF 는 data/candles-index.json(첫 화면용 작은 파일)으로 나뉘어 쓴다.
+        cinfo = cp.write_files(ROOT, pairs, doc["asOf"], doc["generatedAt"])
+        print("candles.json", cinfo["full"][1], "심볼", cinfo["full"][2] // 1024, "KB",
+              "· candles-index.json", cinfo["index"][1], "심볼", cinfo["index"][2] // 1024, "KB")
 
     out = os.path.join(ROOT, "data", "market.json")
     with open(out + ".tmp", "w", encoding="utf-8") as f:

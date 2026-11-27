@@ -10,6 +10,7 @@
   var M = {
     ready: false, snap: null, live: null, liveAt: 0, liveErr: '',
     candles: null, candlesLoading: false,
+    candleIndex: null, candleIndexLoading: false,
     err: '', triedAt: 0
   };
 
@@ -68,6 +69,26 @@
       M.liveErr = String((e && e.message) || e);
       return null;
     });
+  };
+
+  /* 봉 자료는 두 파일이다.
+       data/candles-index.json — 증시 탭 첫 화면(지수 카드 미니차트)이 쓰는 지수·대표 ETF 9종.
+       data/candles.json      — 그 밖의 종목 봉. 종목 상세·큰 차트를 열 때만 받는다(Candles.loadFor).
+     두 파일 모두 일봉 최근 1년 + 주봉 5년이고 모양은 같다({symbols, weekly}). */
+  M.loadCandleIndex = function () {
+    if (M.candleIndex) return Promise.resolve(M.candleIndex);
+    if (M.candleIndexLoading) return M._candleIndexPromise;
+    M.candleIndexLoading = true;
+    M._candleIndexPromise = getJSON('data/candles-index.json').then(function (js) {
+      M.candleIndex = js;
+      M.candleIndexLoading = false;
+      return js;
+    }).catch(function (e) {
+      M.candleIndexLoading = false;
+      M.candleIndexErr = String((e && e.message) || e);
+      return { symbols: {}, weekly: {} };
+    });
+    return M._candleIndexPromise;
   };
 
   M.loadCandles = function () {

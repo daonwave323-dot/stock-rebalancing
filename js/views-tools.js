@@ -859,7 +859,8 @@
     h += '<table class="mkt"><tbody>';
     h += '<tr><td class="nm">점수·폭락 사례</td><td class="nm">data/scores.json · data/crashes.json — 원본 앱 v2.7.0 자산에서 만든 값</td></tr>';
     h += '<tr><td class="nm">증시 스냅샷</td><td class="nm">data/market.json — ' + esc(s ? (s.sources || []).join(' · ') : '없음') + '</td></tr>';
-    h += '<tr><td class="nm">봉(캔들)</td><td class="nm">data/candles.json — 나스닥·네이버 일봉</td></tr>';
+    h += '<tr><td class="nm">봉(캔들)</td><td class="nm">data/candles-index.json — 지수·대표 ETF 9종(첫 화면 미니차트) / ' +
+      'data/candles.json — 그 밖의 종목 봉(상세를 열 때). 둘 다 일봉 최근 1년 + 주봉 5년</td></tr>';
     h += '<tr><td class="nm">일정</td><td class="nm">data/calendar.json — 나스닥 경제지표·실적 캘린더 + 앱 내장 손글 일정</td></tr>';
     h += '<tr><td class="nm">5분 갱신</td><td class="nm">data/live.json — ' + esc(Mkt.liveText()) + '</td></tr>';
     h += '</tbody></table>';

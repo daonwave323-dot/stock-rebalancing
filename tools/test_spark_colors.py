@@ -55,7 +55,7 @@ def load(name):
 def main():
     os.makedirs(SHOTS, exist_ok=True)
     live = load('live.json')
-    candles = load('candles.json')
+    candles = load('candles-index.json')      # 지수 봉은 작은 파일에 담긴다(일봉 1년 + 주봉 5년)
     ndx = live['symbols'].get('^NDX') or {}
 
     httpd, base = serve()
@@ -67,6 +67,8 @@ def main():
         pg.on('console', lambda m: console.append(m.text) if m.type == 'error' else None)
         pg.on('pageerror', lambda e: console.append('pageerror: ' + str(e)))
         pg.on('response', lambda r: bad.append(r.url) if r.status >= 400 else None)
+        pulled = []
+        pg.on('request', lambda r: pulled.append(r.url))
 
         # ---------------------------------------------------------- ① 지수 카드
         pg.goto(base + 'index.html#/market')
@@ -101,6 +103,12 @@ def main():
         # 6개월 = 최근 126봉(+오늘 값 1개까지)
         pts = [c['pts'] for c in cards]
         check('미니차트 = 6개월(126봉 안팎)', all(120 <= n <= 127 for n in pts), pts)
+
+        # 증시 탭 첫 화면은 지수 봉만 담은 작은 파일만 받는다(종목 봉 큰 파일은 상세를 열 때만).
+        check('첫 화면이 지수 봉 파일을 받는다', any(u.endswith('data/candles-index.json') for u in pulled), pulled[-4:])
+        check('첫 화면이 종목 봉 큰 파일을 받지 않는다',
+              not any(u.split('?')[0].endswith('/data/candles.json') for u in pulled),
+              [u for u in pulled if 'candles' in u])
 
         # 면 채움 + 선 색 = 등락 색
         ink = pg.evaluate("""(()=>{const out=[];document.querySelectorAll('.idx-cell').forEach(c=>{
@@ -147,7 +155,9 @@ def main():
         check('5년 = 주봉(260봉 안팎)', s5['span'] == '주봉' and 250 <= s5['n'] <= 270, s5)
         pg.query_selector('#cbox').screenshot(path=os.path.join(SHOTS, 'test-chart-5y.png'))
         cndx = candles.get('symbols', {}).get('^NDX') or []
-        check('candles.json 에 ^NDX 일봉 5년', len(cndx) >= 1200, len(cndx))
+        wndx = candles.get('weekly', {}).get('^NDX') or []
+        check('candles-index.json에 ^NDX 일봉 1년', len(cndx) == 252, len(cndx))
+        check('candles-index.json에 ^NDX 주봉 5년', len(wndx) >= 250, len(wndx))
         check('^NDX 마지막 봉 날짜 = live 정규장 날짜', cndx and cndx[-1][0] == ndx.get('regularCloseDate'),
               (cndx[-1][0] if cndx else None, ndx.get('regularCloseDate')))
 

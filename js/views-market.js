@@ -18,7 +18,8 @@
     timer: null, lastLive: 0, query: '', hits: [], probe: null, note: ''
   };
 
-  /* 큰 차트 기간 — 일봉을 이만큼 잘라 넘기고, 주·월·연봉 묶기는 기존 Candles.fold 가 한다. */
+  /* 큰 차트 기간 — 일봉은 이만큼(거래일) 잘라 넘기고, 주·월·연봉 묶기는 기존 Candles.fold 가 한다.
+     일봉 자료는 최근 1년(약 252거래일)까지이고, 주·월·연봉은 담아 둔 5년 주봉(weekly)을 쓴다. */
   var RANGES = [['6m', '6개월', 126], ['1y', '1년', 252], ['5y', '5년', 1260]];
   function rangeN(k) {
     for (var i = 0; i < RANGES.length; i++) if (RANGES[i][0] === k) return RANGES[i][2];
@@ -385,8 +386,8 @@
   }
 
   /* ------------------------------------------------------------ 지수 미니 차트
-     data/candles.json 의 최근 6개월(약 126거래일) 종가를 면+선으로 그린다(기본 기간 6개월).
-     봉 자료는 이 파일 하나를 한 번만 받아 캐시한다(Mkt.loadCandles · Candles.loadFor).
+     지수 카드 미니차트는 지수 봉만 담은 작은 파일(data/candles-index.json)의 최근 6개월(약 126거래일)
+     종가를 면+선으로 그린다. 종목 봉 큰 파일(data/candles.json)은 이 화면에서 받지 않는다.
      live.json 에 그 심볼의 dayBars 가 있으면 날짜로 합쳐 더 새 값을 쓴다(^NDX·^VIX).
      봉이 없으면 선 없이 숫자만 남긴다. 색은 그 화면의 등락 색 규칙(국내 상승 빨강·하락 파랑 /
      미국 상승 초록·하락 빨강)을 그대로 쓴다. */
@@ -413,7 +414,7 @@
         paintSpark(cv, sym, bars || [], market, basis);
       };
       if (w.Candles && Candles.loadFor) {
-        Candles.loadFor(sym).then(done).catch(function () { done([]); });
+        Candles.loadFor(sym, { spark: true }).then(done).catch(function () { done([]); });
       } else {
         done([]);
       }
@@ -1092,6 +1093,17 @@
     });
   }
 
+  /* 기간을 달력 개월로 자른다 — 주봉·월봉은 봉 하나가 여러 거래일이라 봉 수로 자르면 기간이 어긋난다. */
+  var RANGE_MONTHS = { '6m': 6, '1y': 12, '5y': 60 };
+  function untilMonths(bars, months) {
+    if (!bars || !bars.length) return [];
+    var last = new Date(bars[bars.length - 1][0] + 'T00:00:00Z');
+    var cut = new Date(Date.UTC(last.getUTCFullYear(), last.getUTCMonth() - (months || 60), last.getUTCDate()));
+    var cutS = cut.toISOString().slice(0, 10);
+    var out = bars.filter(function (b) { return b[0] >= cutS; });
+    return out.length ? out : bars.slice(-1);
+  }
+
   function renderChart(sym, q, bars, spanKey, maOff, barsSrc) {
     var view = document.getElementById('view');
     if (!view) return;
@@ -1100,11 +1112,16 @@
     // 화면을 떠난 뒤 늦게 도착한 봉 요청이 다른 종목 화면에 그려지지 않게 한다.
     if (box.getAttribute('data-sym') && box.getAttribute('data-sym') !== sym) return;
     var cur = q.cur;
-    var all = bars || [];
+    var all0 = bars || [];
     var sp = Candles.spanOf(spanKey);
-    // 기간(6개월·1년·5년) — 일봉을 이만큼 잘라 넘긴다. 주·월·연봉 묶기는 Candles.fold 가 한다.
+    /* 일봉은 최근 1년(약 252거래일)만 담긴다. 주·월·연봉은 따로 담아 둔 5년 주봉(weekly)을 쓴다 —
+       5년 기간 탭이 일봉 1년에서 잘려 보이지 않게. 주봉을 다시 묶어도(월·연봉) 같은 규칙이다. */
+    var wk = (Candles.weeklyOf && Candles.weeklyOf(sym)) || null;
+    var all = (spanKey !== 'day' && wk && wk.length) ? wk : all0;
+    // 기간(6개월·1년·5년) — 일봉은 거래일 수로, 주봉은 달력 개월로 자른다.
     var n = rangeN(st.range);
-    var picked = all.length > n ? all.slice(all.length - n) : all;
+    var picked = (all === wk) ? untilMonths(all, RANGE_MONTHS[st.range])
+      : (all.length > n ? all.slice(all.length - n) : all);
     var use = Candles.usable(picked, spanKey);   // 기간으로 자른 뒤 기준 — 모자란 봉 단위를 정확히 적는다
     var note = view.querySelector('#cnote');
     var leg0 = view.querySelector('#maleg');
@@ -1121,7 +1138,9 @@
       note.textContent = (barsSrc === 'live' ? '5분 갱신이 받아 둔 최근 ' + all.length + '일 일봉입니다(봉 파일에 없는 종목). ' : '') +
         res.bars.length + '개 ' + sp.label + ' · ' + rangeLabel(st.range) + ' 구간 · ' + (use.ok ? '' :
         '이 봉 단위는 자료가 ' + use.count + '개뿐입니다(약 ' + (sp.need) + '개 필요). 봉을 지어내지 않습니다. ') +
-        '이동평균선 ' + sp.ma.join('/') + ' ' + sp.unit;
+        '이동평균선 ' + sp.ma.join('/') + ' ' + sp.unit +
+        // 일봉은 최근 1년치만 담는다 — 5년을 고른 채 일봉을 보면 그 사실을 적는다(지어내지 않는다).
+        (spanKey === 'day' && st.range === '5y' ? ' · 일봉은 최근 1년치(약 252거래일)만 담습니다 — 5년은 주봉으로 보세요.' : '');
     }
     var leg = view.querySelector('#maleg');
     if (leg) {
@@ -1160,7 +1179,7 @@
     h += '<div class="chart-box" id="cbox" data-sym="' + esc(sym) + '" style="margin-top:8px"><canvas></canvas></div>' +
       '<div class="chart-readout note" style="margin-top:6px">차트를 짚으면 그 봉의 값이 나옵니다.</div>' +
       '<div class="ma-legend" id="maleg"></div><div class="note" id="cnote"></div>' +
-      '<div class="note">봉은 야후 일봉(지수·주요 종목)이고, 주·월·연봉은 브라우저가 같은 규칙으로 묶습니다. 이동평균선은 그 봉 단위의 종가로 계산합니다.</div></section>';
+      '<div class="note">봉은 야후 일봉 최근 1년(약 252거래일)과 주봉 5년입니다. 월·연봉은 브라우저가 같은 규칙으로 묶고, 5년 기간 탭은 주봉으로 그립니다. 이동평균선은 그 봉 단위의 종가로 계산합니다.</div></section>';
     view.innerHTML = h;
     bindTop(view, false);
     var q = { cur: market === 'kr' ? 'KRW' : 'USD', market: market };

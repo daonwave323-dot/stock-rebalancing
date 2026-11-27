@@ -18,7 +18,7 @@
 0이 아닌 코드로 끝난다. 관심 종목이 일부 실패하면 그 심볼만 이전 값을 이어 쓰고 `partial` 에 적는다.
 
   python3 tools/live_update.py                 # data/live.json 갱신
-  python3 tools/live_update.py --candles       # data/candles.json 일봉을 야후 5년으로 다시 받기
+  python3 tools/live_update.py --candles       # 봉 파일 다시 받기(일봉 1년 + 주봉 5년)
   python3 tools/live_update.py --dry-run       # 파일 쓰지 않고 결과만 출력
   python3 tools/live_update.py --now 2026-11-28T03:00:00Z   # 시각 고정(휴장일 점검용)
 """
@@ -816,23 +816,36 @@ def write_candles(path, doc):
 
 
 def merge_candles(path, entries):
-    """지수(^NDX·^VIX) 봉만 data/candles.json 에 덮어쓴다. 다른 심볼은 건드리지 않는다."""
-    doc = read_json(path)
-    syms = doc.get("symbols") if isinstance(doc.get("symbols"), dict) else {}
+    """이번에 받은 지수 봉(^NDX·^VIX)을 봉 파일에 덮어쓴다. 다른 심볼은 건드리지 않는다.
+
+    일봉은 최근 1년만, 주봉은 5년만 담는 규칙(candle_periods)으로 다시 잘라 쓴다 —
+    이 경로로 다시 5년 일봉이 들어오지 않게 한다.
+    """
+    import candle_periods as cp
+    root = os.path.dirname(os.path.dirname(os.path.abspath(path)))
+    pairs = cp.load_pairs(root)
     changed = False
     for k, bars in (entries or {}).items():
-        if bars and len(bars) >= 2 and syms.get(k) != bars:
-            syms[k] = bars
+        if not bars or len(bars) < 2:
+            continue
+        rows = bars
+        if isinstance(bars[0], dict):        # {d,o,h,l,c} 꼴로 온 경우
+            rows = [[b.get("d") or b.get("date"), b.get("o"), b.get("h"), b.get("l"), b.get("c"), b.get("v")]
+                    for b in bars if isinstance(b, dict)]
+        old_daily, old_week = pairs.get(k, ([], []))
+        bydate = {r[0]: list(r) for r in old_daily}
+        for r in rows:
+            bydate[str(r[0])[:10]] = list(r)
+        merged = [bydate[d] for d in sorted(bydate)]
+        slim_daily, slim_week = cp.slim(merged)
+        if slim_daily != old_daily or slim_week != old_week:
+            pairs[k] = (slim_daily, slim_week)
             changed = True
     if not changed:
         return 0
     now = datetime.now(tz=timezone.utc)
-    doc.setdefault("note", "일봉 [날짜, 시가, 고가, 저가, 종가, 거래량]. 주·월·연봉은 브라우저가 묶는다.")
-    doc["symbols"] = syms
-    doc["asOf"] = now.strftime("%Y-%m-%d")
-    doc["generatedAt"] = now.isoformat(timespec="seconds")
-    write_candles(path, doc)
-    return len(syms)
+    cp.write_files(root, pairs, now.strftime("%Y-%m-%d"), now.isoformat(timespec="seconds"))
+    return len(pairs)
 
 
 def yahoo_key(key, info=None):
@@ -852,13 +865,17 @@ def yahoo_key(key, info=None):
 
 
 def refresh_candles(root, out_path):
-    """data/candles.json 의 심볼을 야후 일봉(range=5y)으로 다시 받는다.
+    """봉 파일의 심볼을 야후 일봉(range=5y)으로 다시 받는다.
 
+    담는 기간은 candle_periods 규칙 — 일봉 최근 1년(약 252거래일) + 주봉 5년.
+    파일은 data/candles.json(종목)과 data/candles-index.json(지수·대표 ETF)으로 나눠 쓴다.
     이미 있는 심볼 목록을 그대로 쓰고 ^NDX·^VIX 를 더한다. 받지 못한 심볼은 기존 봉을 그대로 둔다.
-    주·월·연봉은 브라우저(js/market-candles.js)가 같은 일봉에서 묶으므로 여기서 만들지 않는다.
+    주·월·연봉은 브라우저(js/market-candles.js)가 묶고, 주봉은 브라우저와 같은 규칙으로 미리 잘라
+    담는다(5년 탭이 일봉 1년에서 잘리지 않게).
     """
-    old = read_json(out_path)
-    old_syms = old.get("symbols") if isinstance(old.get("symbols"), dict) else {}
+    import candle_periods as cp
+    old_pairs = cp.load_pairs(root)
+    old_syms = {k: v[0] for k, v in old_pairs.items()}
     snap = read_json(os.path.join(root, "data", "market.json"))
     info = snap.get("symbols") if isinstance(snap.get("symbols"), dict) else {}
     keys = list(old_syms.keys())
@@ -872,7 +889,7 @@ def refresh_candles(root, out_path):
         if b and not b.startswith("^") and b not in keys:
             keys.append(b)
     fx = Fetcher()
-    out, failed = {}, []
+    pairs, failed = {}, []
     for key in keys:
         ys = yahoo_key(key, info.get(key))
         tries = [ys]
@@ -890,18 +907,20 @@ def refresh_candles(root, out_path):
                 print("  봉 실패", key, sym, str(e)[:80], file=sys.stderr)
                 bars = []
         if bars:
-            out[key] = bars
-            print("  봉", key, len(bars), bars[0][0], "~", bars[-1][0])
+            pairs[key] = cp.slim(bars)
+            daily, weekly = pairs[key]
+            print("  봉", key, "일", len(daily), daily[0][0] if daily else "-", "~",
+                  daily[-1][0] if daily else "-", "· 주", len(weekly))
         else:
             failed.append(key)
-            if old_syms.get(key):
-                out[key] = old_syms[key]     # 받지 못하면 기존 봉을 지우지 않는다
+            if old_pairs.get(key):
+                pairs[key] = old_pairs[key]         # 받지 못하면 기존 봉을 지우지 않는다
     now = datetime.now(tz=timezone.utc)
-    doc = {"asOf": now.strftime("%Y-%m-%d"), "generatedAt": now.isoformat(timespec="seconds"),
-           "note": "일봉 [날짜, 시가, 고가, 저가, 종가, 거래량]. 주·월·연봉은 브라우저가 묶는다.",
-           "symbols": out}
-    write_candles(out_path, doc)
-    print("candles.json", len(out), "심볼 ·", os.path.getsize(out_path) // 1024, "KB · 실패", len(failed),
+    info2 = cp.write_files(root, pairs, now.strftime("%Y-%m-%d"), now.isoformat(timespec="seconds"))
+    full_path, full_n, full_b = info2["full"]
+    idx_path, idx_n, idx_b = info2["index"]
+    print("candles.json", full_n, "심볼 ·", full_b // 1024, "KB  ·  candles-index.json", idx_n, "심볼 ·",
+          idx_b // 1024, "KB  ·  실패", len(failed),
           ("(" + ", ".join(failed[:8]) + ")") if failed else "")
     return 0
 
@@ -918,7 +937,7 @@ def main(argv=None):
     ap.add_argument("--candles", action="store_true",
                     help="data/candles.json 의 일봉을 야후 5년으로 다시 받고 끝낸다(지수·종목 공통)")
     ap.add_argument("--write-candles", action="store_true",
-                    help="이번 실행에서 받은 ^NDX·^VIX 봉을 data/candles.json 에도 덮어쓴다(기본은 live.json 만)")
+                    help="이번 실행에서 받은 ^NDX·^VIX 봉을 봉 파일에도 덮어쓴다(기본은 live.json 만)")
     ap.add_argument("--candles-out", default=os.path.join(root, "data", "candles.json"))
     args = ap.parse_args(argv)
 
