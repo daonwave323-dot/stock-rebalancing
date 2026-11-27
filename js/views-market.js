@@ -261,8 +261,11 @@
     h += '<section class="panel"><div class="card-h"><h2>마켓맵</h2><span class="right">' +
       '<span class="daytag">' + (basis === 'after' ? '프리마켓' : '정규장') + '</span></span></div>';
     h += '<div class="seg-row" role="group" aria-label="마켓맵 보기" style="margin-top:8px">';
+    // 국내에는 QQQ·SPY·DIA 구성종목이 없다. 반도체 보기는 그 시장 자료에 반도체 종목이 있을 때만 연다.
+    var hasSemi = Mkt.rows(market, basis).some(function (r) { return r.industry === 'Semiconductors'; });
     [['all', '전체'], ['QQQ', 'QQQ'], ['SPY', 'SPY'], ['DIA', 'DIA'], ['SOX', '반도체'], ['SECTOR', '섹터·업종']].forEach(function (o) {
-      if (market === 'kr' && o[0] !== 'all' && o[0] !== 'SECTOR') return;
+      if (market === 'kr' && o[0] !== 'all' && o[0] !== 'SECTOR' && o[0] !== 'SOX') return;
+      if (o[0] === 'SOX' && !hasSemi) return;
       h += '<button class="seg' + (st.mapScope === o[0] ? ' on' : '') + '" data-scope="' + o[0] + '" type="button" aria-pressed="' +
         (st.mapScope === o[0]) + '">' + o[1] + '</button>';
     });
@@ -283,14 +286,19 @@
       h += '<div class="note">섹터를 누르면 업종 목록, 업종을 누르면 종목 목록이 열립니다. 칸 넓이는 섹터 합산 시가총액, 등락은 시총 가중 평균입니다.</div>';
     } else {
       cells = mapCells(market, basis, st.mapScope);
-      h += '<div class="note" style="margin:6px 0 6px">' + esc(mapNote()) + '</div>';
-      h += '<div class="map-box" id="mapbox"><canvas aria-label="마켓맵 — 칸을 누르면 그 섹터의 업종이 열립니다"></canvas></div>';
+      var stockMap = st.mapScope === 'SOX';
+      h += '<div class="note" style="margin:6px 0 6px">' + esc(mapNote(cells.length)) + '</div>';
+      h += '<div class="map-box" id="mapbox"><canvas aria-label="' + (stockMap
+        ? '반도체 마켓맵 — 칸을 누르면 그 종목 상세가 열립니다'
+        : '마켓맵 — 칸을 누르면 그 섹터의 업종이 열립니다') + '"></canvas></div>';
       h += '<div class="map-legend"><span>−3%</span><span style="width:14px;height:8px;background:' + Treemap.colorOf(-3) + '"></span>' +
         '<span style="width:14px;height:8px;background:' + Treemap.colorOf(-1) + '"></span>' +
         '<span style="width:14px;height:8px;background:' + Treemap.colorOf(0) + '"></span>' +
         '<span style="width:14px;height:8px;background:' + Treemap.colorOf(1) + '"></span>' +
         '<span style="width:14px;height:8px;background:' + Treemap.colorOf(3) + '"></span><span>+3%</span></div>';
-      h += '<div class="note">칸 넓이는 섹터 합산 시가총액, 색은 등락률(±3%)입니다. 글자·숫자를 함께 적어 색만으로 읽지 않게 했습니다.</div>';
+      h += '<div class="note">' + (stockMap
+        ? '칸 하나가 종목 하나입니다. 넓이는 종목 시가총액, 색은 등락률(±3%)이고, 칸을 누르면 그 종목 상세가 열립니다.'
+        : '칸 넓이는 섹터 합산 시가총액, 색은 등락률(±3%)입니다. 글자·숫자를 함께 적어 색만으로 읽지 않게 했습니다.') + '</div>';
     }
     h += '</section>';
 
@@ -329,8 +337,9 @@
       }
       var pick = function (key, data) {
         if (st.mapScope === 'SOX') {
-          var row = (Mkt.rows(market, basis)).filter(function (r) { return NameKo.ind(r.industry) === key || r.name === key; })[0];
-          if (row) openIndustry(row.sector, row.industry, key);
+          // 칸 하나가 종목 하나 — 업종 화면이 아니라 그 종목 상세로 간다.
+          var sym = (data && data.sym) || key;
+          if (Mkt.quote(sym)) openStock(sym);
           return;
         }
         openSector(data && data.sectorEn ? data.sectorEn : key);
@@ -445,27 +454,36 @@
       return c;
     });
     if (scope === 'SOX') {
-      var semi = rows.filter(function (r) { return r.industry === 'Semiconductors'; })
-        .sort(function (a, b) { return (b.mcap || 0) - (a.mcap || 0); }).slice(0, 250);
-      var by = {};
-      semi.forEach(function (r) {
-        var k = NameKo.ind(r.industry);
-        if (!by[k]) by[k] = { name: k, sectorEn: r.sector, industryEn: r.industry, mcap: 0, count: 0, wsum: 0 };
-        by[k].mcap += r.mcap || 0; by[k].count++; by[k].wsum += (r.mcap || 0) * (r.chg || 0);
-      });
-      return Object.keys(by).map(function (k) {
-        return { name: k, sectorEn: by[k].sectorEn, industryEn: by[k].industryEn, mcap: by[k].mcap,
-          count: by[k].count, chg: by[k].mcap ? by[k].wsum / by[k].mcap : null };
-      }).sort(function (a, b) { return b.mcap - a.mcap; });
+      // 한 칸 = 한 종목. 업종 이름으로 다시 묶으면 칸이 하나가 되어 아무것도 안 보인다.
+      return rows.filter(function (r) { return r.industry === 'Semiconductors' && (r.mcap || 0) > 0; })
+        .sort(function (a, b) { return (b.mcap || 0) - (a.mcap || 0); })
+        .map(function (r) {
+          var desc = shortCo(r.desc || r.name || '');
+          return {
+            sym: r.sym, name: r.sym, desc: desc, kind: 'stock',
+            sectorEn: r.sector, industryEn: r.industry,
+            mcap: r.mcap, chg: r.chg, count: 1,
+            lines: [r.sym, desc, chgShort(r.chg), Mkt.capShort(r.mcap, r.cur)].filter(function (t) { return !!t; })
+          };
+        });
     }
     // QQQ/SPY/DIA — 구성종목 자료가 없으므로, 그 ETF 가 담는 대표 종목을 시총 상위로 대신한다(그 사실을 적는다).
     return Mkt.sectorCells(market, basis);
   }
 
-  function mapNote() {
+  /* 칸에 함께 적을 값 — 티커 아래 줄(회사 이름·등락률·시가총액)에 쓴다. */
+  function shortCo(s) {
+    return String(s || '').replace(/[\s,]*\b(Inc\.?|Incorporated|Corporation|Corp\.?|Co\.?,?\s*Ltd\.?|Ltd\.?|plc|PLC|Limited|Holdings?|Group|N\.V\.|S\.A\.|SE|AG)\s*$/i, '').trim();
+  }
+  function chgShort(v) {
+    if (v == null || isNaN(v)) return '—';
+    return (v > 0 ? '+' : '') + Number(v).toFixed(2) + '%';
+  }
+
+  function mapNote(n) {
     var basis = st.basis === 'after' ? '프리마켓' : '정규장';
     if (st.mapScope === 'SECTOR') return '섹터 목록';
-    if (st.mapScope === 'SOX') return '반도체 업종별 마켓맵 · ' + basis + ' 등락률';
+    if (st.mapScope === 'SOX') return '반도체 ' + (n || 0) + '종목 · 시가총액 기준 · ' + basis + ' 등락률';
     if (st.mapScope === 'all') return '시가총액 상위 종목을 섹터로 묶었습니다 · ' + basis + ' 등락률';
     return st.mapScope + ' 구성종목 자료는 무료 공개 소스에 없어, 시가총액 상위 섹터로 대신 보여 줍니다.';
   }
@@ -970,6 +988,7 @@
   }
 
   function openSector(sectorEn) { location.hash = '#/market/sector/' + encodeURIComponent(sectorEn); }
+  function openStock(sym) { location.hash = '#/market/stock/' + encodeURIComponent(sym); }
   function openIndustry(sectorEn, industryEn, name) {
     location.hash = '#/market/industry/' + encodeURIComponent(sectorEn) + '/' + encodeURIComponent(industryEn || name || '');
   }

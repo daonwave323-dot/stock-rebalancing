@@ -95,6 +95,59 @@
     return blend(flat, t >= 0 ? green : red, Math.abs(t));
   }
 
+  /* 칸 안에 여러 줄을 적는 경우(반도체 종목 칸: 티커·회사 이름·등락률·시가총액).
+     높이에 들어가는 만큼만 적고, 첫 줄(티커)은 폭에 맞춰 줄인다. 자리가 모자라면
+     회사 이름보다 등락률·시가총액을 먼저 남긴다. */
+  function drawLines(ctx, r, lines) {
+    var F = '-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif';
+    var maxW = r.w - 8;
+    if (maxW <= 8 || !lines.length) return;
+    var show = r.h >= 60 ? 4 : (r.h >= 46 ? 3 : (r.h >= 32 ? 2 : 1));
+    if (show > lines.length) show = lines.length;
+    var fs = r.w < 48 ? 9 : (r.w < 70 ? 10.5 : (r.w < 110 ? 12 : 13));
+    ctx.font = '700 ' + fs + 'px ' + F;
+    while (fs > 7 && ctx.measureText(lines[0]).width > maxW) {
+      fs -= 0.5;
+      ctx.font = '700 ' + fs + 'px ' + F;
+    }
+    if (ctx.measureText(lines[0]).width > maxW) return;
+    var subs = [], subFs = 9.5;
+    if (show > 1 && lines.length >= 4) {
+      var merged = lines[2] + ' · ' + lines[3];
+      var variants = show >= 4 ? [lines[1], lines[2], lines[3]]
+        : (show === 3 ? [lines[1], merged, lines[2]] : [merged, lines[2], lines[1]]);
+      ctx.font = subFs + 'px ' + F;
+      for (var i = 0; i < variants.length; i++) {
+        var t = variants[i];
+        if (!t || t === '—' || subs.indexOf(t) >= 0) continue;
+        if (ctx.measureText(t).width <= maxW) {
+          subs.push(t);
+          if (subs.length >= show - 1) break;
+        }
+      }
+    }
+    var gap = 11.5;
+    var total = fs + subs.length * gap;
+    var y = r.y + r.h / 2 - total / 2 + fs / 2;
+    var cx = r.x + r.w / 2;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(r.x + 2, r.y + 2, r.w - 4, r.h - 4);
+    ctx.clip();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#eef2f8';
+    ctx.font = '700 ' + fs + 'px ' + F;
+    ctx.fillText(lines[0], cx, y);
+    ctx.fillStyle = '#dfe6ef';
+    ctx.font = subFs + 'px ' + F;
+    for (var j = 0; j < subs.length; j++) {
+      y += gap;
+      ctx.fillText(subs[j], cx, y);
+    }
+    ctx.restore();
+  }
+
   /* 칸을 캔버스에 그린다. onPick(key) 로 누른 칸을 알려 준다. */
   function draw(box, cells, onPick) {
     if (!box) return;
@@ -131,6 +184,7 @@
       ctx.lineWidth = 1.2;
       ctx.strokeRect(r.x + 0.5, r.y + 0.5, r.w - 1, r.h - 1);
       if (r.w < 34 || r.h < 20) continue;
+      if (d.lines && d.lines.length) { drawLines(ctx, r, d.lines); continue; }
       var name = d.name;
       var sub = (d.chg == null ? '—' : (d.chg > 0 ? '+' : '') + d.chg.toFixed(2) + '%') + ' · ' + d.count + '종목';
       ctx.save();
