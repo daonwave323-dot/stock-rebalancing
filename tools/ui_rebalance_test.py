@@ -296,7 +296,11 @@ def main():
 
         # 14) 국장 한글 이름 찾기
         pg.fill('#krFind', '삼성')
-        pg.wait_for_timeout(1200)
+        try:
+            pg.wait_for_selector('#krFindAc button', timeout=8000)
+        except Exception:
+            pass
+        pg.wait_for_timeout(300)
         hits = pg.eval_on_selector_all('#krFindAc button', "els => els.slice(0,4).map(e => e.textContent.trim())")
         check('국장 종목을 한글 이름으로 찾는다', len(hits) > 0 and '삼성' in ''.join(hits), hits)
         if hits:

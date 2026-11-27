@@ -390,14 +390,14 @@
     var myPos;
     if (!pf) {
       myPos = '<p class="big-line dim">보유를 먼저 넣어 주세요</p>' +
-        '<p class="sub-line">리밸런싱의 미국장(달러)·國장(원) 탭에 티커·수량·평균단가를 넣으면 비중과 밴드 이탈을 여기서 계산합니다. ' +
+        '<p class="sub-line">리밸런싱의 미국장(달러)·국장(원) 탭에 티커·수량·평균단가를 넣으면 비중과 밴드 이탈을 여기서 계산합니다. ' +
         '<a href="#/rebalance">보유 넣기 →</a></p>';
     } else {
       var usd = function (v) { return '$' + Math.round(Number(v) || 0).toLocaleString('ko-KR'); };
       var parts = [];
       parts.push('미국장 ' + usd(pf.us.totalValue) + (pf.rate ? ' (약 ' + F.int(pf.usKrw) + '원)' : ' (환율 값 없음)'));
-      parts.push('國장 ' + F.int(pf.krKrw) + '원');
-      if (pf.topRow) parts.push('최대 비중 ' + esc(pf.topRow.sym || '이름 없음') + ' ' + F.num(pf.topRow.weight, 1) + '%');
+      parts.push('국장 ' + F.int(pf.krKrw) + '원');
+      if (pf.topRow) parts.push('최대 비중 ' + (pf.topRow.mkt === 'kr' ? '[국장] ' : '[미국장] ') + esc(pf.topRow.sym || '이름 없음') + ' ' + F.num(pf.topRow.weight, 1) + '%');
       parts.push('밴드 이탈 ' + pf.out + '종목');
       myPos = (pf.krwOnly
           ? '<p class="big-line">국장 ' + F.int(pf.krKrw) + '원 <span class="dim">· 미국장은 환율 값이 없어 환산 전</span></p>'
