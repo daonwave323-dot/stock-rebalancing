@@ -12,6 +12,7 @@
 
   var KEY = 'posts';
   var manifest = null;
+  var formOpen = false;   /* 글쓰기 폼은 처음엔 접힘 — 목록이 먼저 보인다 (2026-11-28) */
 
   /* ------------------------------------------------------------ 저장 계층(인터페이스) */
   var PostStore = {
@@ -42,6 +43,35 @@
   function serverMode() { return !!(w.PostStoreApi && w.PostStoreApi.available()); }
 
   function uid() { return 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+
+  /* ------------------------------------------------------------ 분류
+   * 기본 둘(칼럼·리포트)은 목록 묶음 이름이라 고정. 사용자가 더한 분류는 이 브라우저에 남긴다.
+   * 글에는 cat(분류 이름)을 함께 남기고, cat이 없는 예전 글은 kind로 칼럼/리포트를 정한다. */
+  var CKEY = 'cats';
+  var BASE_CATS = ['칼럼', '리포트'];
+  var catMode = null, catFrom = null;
+
+  function customCats() {
+    var a = S.get(CKEY, []);
+    if (!Array.isArray(a)) return [];
+    return a.filter(function (c) { return c && c.name && BASE_CATS.indexOf(c.name) < 0; });
+  }
+  function saveCats(a) { return S.set(CKEY, a); }
+  function catNames() { return BASE_CATS.concat(customCats().map(function (c) { return c.name; })); }
+  function catExists(name) { return catNames().indexOf(name) >= 0; }
+  function isBaseCat(name) { return BASE_CATS.indexOf(name) >= 0; }
+  function catOf(it) {
+    var c = it && it.cat;
+    if (c && catExists(c)) return c;
+    return (it && it.kind === 'reports') ? '리포트' : '칼럼';
+  }
+  function catOptions(selected) {
+    var names = catNames();
+    if (names.indexOf(selected) < 0) selected = names[0];
+    return names.map(function (n) {
+      return '<option value="' + esc2(n) + '"' + (n === selected ? ' selected' : '') + '>' + esc2(n) + '</option>';
+    }).join('');
+  }
 
   function loadManifest() {
     if (manifest) return Promise.resolve(manifest);
@@ -115,7 +145,7 @@
   function allItems(idx) {
     var store = activeStore().list().map(function (p) {
       return {
-        id: p.id, kind: p.kind, title: p.title, date: p.date, summary: p.summary,
+        id: p.id, kind: p.kind, cat: p.cat, title: p.title, date: p.date, summary: p.summary,
         body: p.body, dataUrl: p.dataUrl, mime: p.mime, fileName: p.fileName,
         local: true
       };
@@ -123,7 +153,7 @@
     var fromManifest = (idx.items || []).map(function (x) {
       return {
         id: x.id || x.path, kind: x.kind || (/\.pdf$/i.test(x.path) ? 'reports' : 'notes'),
-        title: x.title, date: x.date, summary: x.summary, path: x.path, local: false
+        cat: x.cat, title: x.title, date: x.date, summary: x.summary, path: x.path, local: false
       };
     });
     return store.concat(fromManifest);
@@ -135,10 +165,10 @@
       ? '#/note/' + encodeURIComponent(it.id)
       : (pdf || img ? esc2(it.path) : '#/note/' + encodeURIComponent(it.id));
     var cls = (pdf || img) && !it.local ? 'doc-card' : 'read-card';
-    var tag = it.local ? '이 브라우저' : (pdf ? 'PDF 리포트' : '칼럼');
+    var tag = catOf(it) + (pdf ? ' · PDF' : '');
     return '<a class="' + cls + '" href="' + href + '"' +
       ((pdf || img) && !it.local ? ' target="_blank" rel="noopener"' : '') + '>' +
-      '<span class="tag">' + tag + ' · ' + (it.date ? F.day(it.date) : '') + '</span>' +
+      '<span class="tag">' + esc2(tag) + ' · ' + (it.date ? F.day(it.date) : '') + '</span>' +
       '<h3>' + esc2(it.title || '제목 없음') + '</h3>' +
       '<p>' + esc2(it.summary || '') + '</p>' +
       (it.local ? '<span class="doc-dl">이 브라우저에만 저장됨</span>' : ((pdf || img) ? '<span class="doc-dl">새 탭에서 열기 · 내려받기</span>' : '')) +
@@ -160,18 +190,24 @@
       return String(b.date || '') < String(a.date || '') ? -1 : 1;
     });
     var localCount = activeStore().list().length;
-    var reports = items.filter(function (x) { return isPdf(x); });
-    var notes = items.filter(function (x) { return !isPdf(x); });
+    var reports = items.filter(function (x) { return isPdf(x) || catOf(x) === '리포트'; });
+    var notes = items.filter(function (x) { return !(isPdf(x) || catOf(x) === '리포트'); });
     var arts = Data.readings.articles;
 
     view.innerHTML =
       '<section class="hero"><div class="crumb"><a href="#/">홈</a> / 글</div>' +
         '<h1>글</h1>' +
-        '<p>여기서 직접 쓰거나 파일을 올릴 수 있고, 저장소 <code>content/</code> 에 둔 리포트·칼럼도 함께 보입니다.</p>' +
+        '<p>리포트·칼럼 목록을 먼저 보여 줍니다. 글을 쓰거나 파일을 올리려면 <b>＋ 글쓰기</b>를 누르세요.</p>' +
         '<p class="byline">글 · Verdictjang</p></section>' +
 
-      '<div class="panel">' +
-        '<div class="panel-h"><h2>글쓰기</h2><span class="badge ' + (serverMode() ? 'good' : 'amber') + '">' + (serverMode() ? '사이트에 올라갑니다' : '이 브라우저에만 저장됩니다') + '</span></div>' +
+      '<div class="post-tools">' +
+        '<button class="btn primary write-toggle" type="button" id="pToggle" aria-expanded="' + (formOpen ? 'true' : 'false') + '" aria-controls="postPanel">' +
+          (formOpen ? '− 글쓰기 접기' : '＋ 글쓰기') + '</button>' +
+        '<span class="badge ' + (serverMode() ? 'good' : 'amber') + '">' + (serverMode() ? '사이트에 올라갑니다' : '이 브라우저에만 저장됩니다') + '</span>' +
+      '</div>' +
+
+      '<div class="panel post-panel" id="postPanel"' + (formOpen ? '' : ' hidden') + '>' +
+        '<div class="panel-h"><h2>글쓰기</h2></div>' +
         '<p class="note" style="margin-bottom:10px">' + (serverMode()
           ? '서버 저장이 연결되어 글과 파일이 사이트에 올라갑니다.'
           : '지금은 서버 저장이 붙기 전이라 글은 <b>이 브라우저(localStorage)</b>에만 남습니다. 다른 기기·다른 사람에게는 보이지 않고, 브라우저 기록을 지우면 함께 사라집니다. 서버 주소를 넣으면 같은 화면 그대로 사이트에 올라갑니다.') + '</p>' +
@@ -186,11 +222,22 @@
         '<div id="writePane">' +
           '<div class="form-grid">' +
             '<div class="field span3"><label for="pTitle">제목</label><input id="pTitle" placeholder="글 제목"></div>' +
-            '<div class="field span2"><label for="pKind">분류</label><select id="pKind"><option value="notes">칼럼</option><option value="reports">리포트</option></select></div>' +
+            '<div class="field span2"><label for="pKind">분류</label><select id="pKind">' + catOptions('칼럼') + '</select>' +
+              '<span class="cat-tools">' +
+                '<button type="button" class="linkbtn" id="pCatAddBtn">＋ 분류 추가</button>' +
+                '<button type="button" class="linkbtn" id="pCatRenBtn">이름 바꾸기</button>' +
+                '<button type="button" class="linkbtn" id="pCatDelBtn">지우기</button>' +
+              '</span></div>' +
             '<div class="field"><label for="pDate">날짜</label><input type="date" id="pDate" value="' + F.today() + '"></div>' +
             '<div class="field span6"><label for="pSummary">한 줄 요약 (선택)</label><input id="pSummary" placeholder="목록에 보일 한 줄"></div>' +
             '<div class="field span6"><label for="pBody">본문 — 마크다운(#, -, **굵게**, [링크](주소))</label>' +
               '<textarea id="pBody" rows="10" placeholder="# 제목&#10;&#10;본문을 씁니다."></textarea></div>' +
+          '</div>' +
+          '<div class="cat-edit" id="pCatEdit" hidden>' +
+            '<input id="pCatName" maxlength="12" placeholder="새 분류 이름 (예: 매크로 · 실적 · 스터디)">' +
+            '<button class="btn sm primary" type="button" id="pCatOk">저장</button>' +
+            '<button class="btn sm ghost" type="button" id="pCatCancel">취소</button>' +
+            '<span class="small" id="pCatMsg"></span>' +
           '</div>' +
           '<div class="row" style="margin-top:10px">' +
             '<button class="btn primary" type="button" id="pSave">글 저장</button>' +
@@ -202,9 +249,10 @@
           '<div class="form-grid">' +
             '<div class="field span3"><label for="pFiles">파일 (PDF · md · 이미지, 여러 개 가능)</label>' +
               '<input type="file" id="pFiles" multiple accept=".pdf,.md,.markdown,.png,.jpg,.jpeg,.webp"></div>' +
-            '<div class="field span2"><label for="pKind2">분류</label><select id="pKind2"><option value="reports">리포트</option><option value="notes">칼럼</option></select></div>' +
+            '<div class="field span2"><label for="pKind2">분류</label><select id="pKind2">' + catOptions('리포트') + '</select></div>' +
             '<div class="field"><label>&nbsp;</label><button class="btn" type="button" id="pUpload">올리기</button></div>' +
           '</div>' +
+          '<div class="row" style="margin-top:4px"><span class="g-mini" id="uMsg" style="color:var(--amber)"></span></div>' +
           '<p class="note">제목은 파일 이름으로 채웁니다. md는 사이트 안에서 읽고, PDF·이미지는 새 탭에서 엽니다. ' +
             '큰 PDF는 브라우저 저장 공간(약 5MB)을 넘기면 저장되지 않습니다 — 그때는 안내가 나옵니다.</p>' +
         '</div>' +
@@ -232,7 +280,132 @@
     bindEditor(view);
   }
 
+  /* ------------------------------------------------------------ 분류 손대기 */
+  function openCatEdit(view, mode) {
+    var box = el('#pCatEdit', view), inp = el('#pCatName', view), msg = el('#pCatMsg', view);
+    if (!box || !inp) return;
+    if (mode === 'rename') {
+      var cur = el('#pKind', view).value;
+      if (isBaseCat(cur)) { toast('칼럼·리포트는 목록 묶음 이름이라 바꿀 수 없습니다.'); return; }
+      catFrom = cur; inp.value = cur; inp.placeholder = '새 분류 이름';
+    } else {
+      catFrom = null; inp.value = ''; inp.placeholder = '새 분류 이름 (예: 매크로 · 실적 · 스터디)';
+    }
+    catMode = mode;
+    if (msg) msg.textContent = '';
+    box.hidden = false;
+    try { inp.focus(); inp.select(); } catch (e) {}
+  }
+
+  function closeCatEdit(view) {
+    var box = el('#pCatEdit', view), msg = el('#pCatMsg', view);
+    if (box) box.hidden = true;
+    if (msg) msg.textContent = '';
+    catMode = null; catFrom = null;
+  }
+
+  /* 분류 목록이 바뀌면 폼을 다시 그리지 않고 선택칸만 갈아 끼운다(쓰던 글을 잃지 않게). */
+  function setCatOptions(sel, want) {
+    if (!sel) return;
+    var cur = (want && catExists(want)) ? want : sel.value;
+    sel.innerHTML = catOptions(cur);
+  }
+
+  function applyCatEdit(view) {
+    var inp = el('#pCatName', view), msg = el('#pCatMsg', view);
+    var name = ((inp && inp.value) || '').replace(/\s+/g, ' ').trim();
+    function warn(t) { if (msg) msg.textContent = t; }
+    if (!name) { warn('이름을 넣어 주세요.'); return; }
+    if (name.length > 12) { warn('이름은 12자까지 됩니다.'); return; }
+    if (isBaseCat(name)) { warn('칼럼·리포트와 같은 이름은 쓸 수 없습니다.'); return; }
+    var list = customCats();
+
+    if (catMode === 'add') {
+      if (catExists(name)) { warn('이미 있는 분류입니다.'); return; }
+      list.push({ id: 'c' + Date.now().toString(36), name: name, at: new Date().toISOString() });
+      if (!saveCats(list)) { warn('저장하지 못했습니다.'); return; }
+      setCatOptions(el('#pKind', view), name);
+      setCatOptions(el('#pKind2', view), null);
+      closeCatEdit(view);
+      toast('분류 ‘' + name + '’를 더했습니다. 글을 저장하면 이 분류로 들어갑니다.');
+      return;
+    }
+
+    if (catMode !== 'rename') return;
+    var from = catFrom, i = -1;
+    for (var k = 0; k < list.length; k++) if (list[k].name === from) i = k;
+    if (i < 0) { warn('바꿀 수 있는 분류가 아닙니다.'); return; }
+    if (name === from) { closeCatEdit(view); return; }
+    if (catExists(name)) { warn('이미 있는 분류입니다.'); return; }
+
+    /* 이름을 바꿔도 그 분류로 쓴 글은 그대로 두고 이름표만 함께 바꾼다. */
+    var moved = 0, store = activeStore();
+    try {
+      store.list().forEach(function (p) {
+        if (catOf({ kind: p.kind, cat: p.cat }) !== from) return;
+        p.cat = name;
+        store.save(p);
+        moved++;
+      });
+    } catch (e) {
+      warn('일부 글의 분류를 바꾸지 못했습니다: ' + String(e.message || e));
+    }
+    list[i].name = name;
+    saveCats(list);
+    setCatOptions(el('#pKind', view), name);
+    setCatOptions(el('#pKind2', view), null);
+    closeCatEdit(view);
+    toast('분류 이름을 ‘' + name + '’로 바꿨습니다' + (moved ? ' — 글 ' + moved + '개의 이름표도 함께 바뀌었습니다.' : '.'));
+  }
+
+  function deleteCat(view) {
+    var sel = el('#pKind', view);
+    var cur = sel ? sel.value : '';
+    if (!cur) return;
+    if (isBaseCat(cur)) { toast('칼럼·리포트는 목록 묶음 이름이라 지울 수 없습니다.'); return; }
+    var n = 0;
+    try {
+      n = activeStore().list().filter(function (p) { return catOf({ kind: p.kind, cat: p.cat }) === cur; }).length;
+    } catch (e) { n = 0; }
+    if (n) {
+      toast('이 분류로 쓴 글이 ' + n + '개 있어 지우지 않았습니다. 글의 분류를 다른 것으로 바꾸거나 글을 지운 뒤에 지워 주세요.');
+      return;
+    }
+    confirmBox({ title: '이 분류를 지울까요?', body: '‘' + cur + '’ 분류를 목록에서 지웁니다. 이 분류로 쓴 글은 없습니다.', ok: '지운다' }, function () {
+      saveCats(customCats().filter(function (c) { return c.name !== cur; }));
+      setCatOptions(el('#pKind', view), null);
+      setCatOptions(el('#pKind2', view), null);
+      toast('분류 ‘' + cur + '’를 지웠습니다.');
+    });
+  }
+
   function bindEditor(view) {
+    /* 글쓰기 폼 접기/펼치기 */
+    var toggle = el('#pToggle', view);
+    if (toggle) toggle.addEventListener('click', function () {
+      formOpen = !formOpen;
+      var panel = el('#postPanel', view);
+      if (panel) panel.hidden = !formOpen;
+      toggle.setAttribute('aria-expanded', formOpen ? 'true' : 'false');
+      toggle.textContent = formOpen ? '− 글쓰기 접기' : '＋ 글쓰기';
+    });
+
+    /* 분류 추가·이름 바꾸기·지우기 */
+    var add = el('#pCatAddBtn', view);
+    if (add) add.addEventListener('click', function () { openCatEdit(view, 'add'); });
+    var ren = el('#pCatRenBtn', view);
+    if (ren) ren.addEventListener('click', function () { openCatEdit(view, 'rename'); });
+    var del = el('#pCatDelBtn', view);
+    if (del) del.addEventListener('click', function () { deleteCat(view); });
+    var ok = el('#pCatOk', view);
+    if (ok) ok.addEventListener('click', function () { applyCatEdit(view); });
+    var cancel = el('#pCatCancel', view);
+    if (cancel) cancel.addEventListener('click', function () { closeCatEdit(view); });
+    var nameIn = el('#pCatName', view);
+    if (nameIn) nameIn.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); applyCatEdit(view); }
+    });
+
     els('[data-pmode]', view).forEach(function (b) {
       b.addEventListener('click', function () {
         var mode = b.getAttribute('data-pmode');
@@ -249,8 +422,9 @@
       var msg = el('#pMsg', view);
       if (!title) { msg.textContent = '제목을 넣어 주세요.'; return; }
       if (!body.trim()) { msg.textContent = '본문을 넣어 주세요.'; return; }
+      var cat = el('#pKind', view).value || '칼럼';
       var post = {
-        id: uid(), kind: el('#pKind', view).value, title: title,
+        id: uid(), kind: (cat === '리포트' ? 'reports' : 'notes'), cat: cat, title: title,
         date: el('#pDate', view).value || F.today(),
         summary: (el('#pSummary', view).value || '').trim(),
         body: body, at: new Date().toISOString()
@@ -268,17 +442,18 @@
     var up = el('#pUpload', view);
     if (up) up.addEventListener('click', function () {
       var input = el('#pFiles', view);
-      var msg = el('#pMsg', view);
+      var msg = el('#uMsg', view);
       var files = input.files ? Array.prototype.slice.call(input.files) : [];
       if (!files.length) { msg.textContent = '올릴 파일을 골라 주세요.'; return; }
-      var kind = el('#pKind2', view).value;
+      var kind = el('#pKind2', view).value || '리포트';
+      var cat = kind;
       var pending = files.length, failed = 0;
       files.forEach(function (f) {
         var isMd = /\.(md|markdown|txt)$/i.test(f.name);
         var reader = new FileReader();
         reader.onload = function () {
           var post = {
-            id: uid(), kind: kind, title: f.name.replace(/\.[^.]+$/, ''),
+            id: uid(), kind: (cat === '리포트' ? 'reports' : 'notes'), cat: cat, title: f.name.replace(/\.[^.]+$/, ''),
             date: F.today(), summary: '', fileName: f.name, mime: f.type || '',
             at: new Date().toISOString()
           };
@@ -300,6 +475,7 @@
   }
 
   V.readings = function (view) {
+    formOpen = false;   /* 탭에 들어올 때는 늘 접힌 상태로 시작 */
     view.innerHTML = '<div class="loading">글 목록을 불러오는 중…</div>';
     loadManifest().then(function (idx) {
       if (!document.body.contains(view)) return;
@@ -313,7 +489,7 @@
 
     function show(post) {
       var head = '<article><section class="hero"><div class="crumb"><a href="#/">홈</a> / <a href="#/readings">글</a> / ' +
-        (post.kind === 'reports' ? '리포트' : '칼럼') + '</div>' +
+        esc2(catOf(post)) + '</div>' +
         '<h1>' + esc2(post.title || '') + '</h1>' +
         '<p class="byline">글 · Verdictjang · ' + (post.date ? F.day(post.date) : '') +
         (post.local ? ' · 이 브라우저에만 저장됨' : '') + '</p></section>';
