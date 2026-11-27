@@ -225,7 +225,7 @@
     view.innerHTML =
       '<section class="hero">' +
         '<div class="row" style="margin-bottom:8px"><h1>오늘</h1>' +
-          '<span class="badge live">지연 데이터 · 점수 ' + F.day(asOf) + ' · 지수 ' + F.day(now.asOf) + ' 종가</span>' +
+          '<span class="badge live">지연 데이터 · 점수 ' + F.day(asOf) + ' · 지수 ' + F.day(now.as_of) + ' 종가</span>' +
           '<span class="badge">^NDX ' + F.int(now.close) + '</span>' +
         '</div>' +
         '<p>여섯 지표로 오늘의 자리를 재고, 계획한 비중으로 다시 맞춥니다.</p>' +
@@ -1425,7 +1425,7 @@
         '<div class="notice" style="margin-top:10px">' +
           '<b>닮은 지점은 \'그때 이랬다\'만 알려줍니다.</b> \'그래서 그다음에 왜 그렇게 됐는지\'는 알려주지 않습니다.' +
           '<div class="dim small" style="margin-top:6px">지금: 고점 후 +' + now.offset + '거래일 · 낙폭 ' + F.pct(now.dd, 1) +
-          ' · 200일선 ' + F.pct(now.gap, 1) + ' · RSI ' + F.num(now.rsi, 1) + ' · VIX ' + F.num(now.vix, 2) + ' (' + F.day(now.asOf) + ')</div>' +
+          ' · 200일선 ' + F.pct(now.gap, 1) + ' · RSI ' + F.num(now.rsi, 1) + ' · VIX ' + F.num(now.vix, 2) + ' (' + F.day(now.as_of) + ')</div>' +
           '<div class="dim small">1929·1987은 원본 자료에 VIX가 없어 <b>세 지표로만</b> 거리를 쟀습니다(VIX 칸 —, 거리에 \'3지표\' 표시). ' +
           '그래서 이 두 사례의 매칭일은 폭락 도중이 아니라 <b>폭락 뒤 반등 구간</b>(1988-03-25, 1930-05-01)일 수 있습니다 — 위 \'고점 후\'를 꼭 같이 보세요.</div>' +
         '</div>' +

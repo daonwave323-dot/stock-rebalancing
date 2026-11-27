@@ -92,7 +92,7 @@
     bindModal();
     Data.load().then(function () {
       var f = document.getElementById('foot-asof');
-      if (f) f.textContent = '점수 ' + F.day(Data.asOf()) + ' · 지수 ' + F.day(Data.now().asOf) + ' 종가 · 지연 데이터';
+      if (f) f.textContent = '점수 ' + F.day(Data.asOf()) + ' · 지수 ' + F.day(Data.now().as_of) + ' 종가 · 지연 데이터';
       route();
       w.addEventListener('hashchange', route);
     }).catch(function (e) {
