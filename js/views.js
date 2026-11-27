@@ -10,6 +10,9 @@
   var analogFocus = null;      /* 다른 화면에서 '닮은 날'로 넘어올 때 기준 낙폭 */
   var analogFocusNote = '';
   var journalEditId = null;    /* 매매일지 수정 중인 기록 */
+  var homeLoadingGauge = false; /* 홈이 프리마켓 값 때문에 매수 지표 자료를 받는 중인지 */
+  var journalFocus = null;     /* 일지에서 방금 누른 매매 — 줄을 강조한다 */
+  var verifyTradeFocus = null; /* 검증 섹션에서 강조할 매매(일지 ↔ 검증 연결) */
   var journalOnlyBad = false;  /* 원칙 위반 매매만 보기 */
   var verifyOnlyBad = false;
 
@@ -125,21 +128,46 @@
     var asOf = Data.asOf();
     var badCount = journal().filter(function (r) { return r.principles && r.principles.pass === false; }).length;
 
+    /* 기준 — 정규장(확정 종가) / 프리마켓(실시간 추정). 원본 MarketScreen 의 두 탭과 같은 구분이고,
+       고른 기준은 홈·매수 지표가 함께 쓴다(Basis 한 곳에 저장). */
+    var basis = w.Basis ? Basis.get() : 'close';
+    var liveNote = w.Basis ? Basis.status() : null;
+
+    /* 프리마켓인데 매수 지표 자료를 아직 안 받았으면 받아서 다시 그린다(첫 화면을 무겁게 하지 않는다) */
+    if (basis === 'live' && w.Basis && Basis.status().hasLive && !Data.gauge && Data.loadGauge && !homeLoadingGauge) {
+      homeLoadingGauge = true;
+      Data.loadGauge().then(function () { homeLoadingGauge = false; V.home(liveView()); })
+        .catch(function () { homeLoadingGauge = false; });
+    }
+
+    function liveRows(key) {
+      if (basis !== 'live' || !w.Basis || !w.GaugeMath) return null;
+      var l = Basis.valuesFor(key);
+      if (!l) return null;
+      return GaugeMath.scoreOf(l.values, key);
+    }
+
     function card(key, cls) {
       var s = t[key];
       var SHORT = { dd: '고점 대비 낙폭', wrsi: '주간 RSI', vixr: 'VIX/50일', gap: '200일선 이격', drsi: '일간 RSI', vixp: '공포 백분위' };
-      var bars = s.rows.map(function (r) {
+      var lr = liveRows(key);
+      var score = lr ? lr.score : s.score;
+      var verdict = lr && w.GaugeMath ? GaugeMath.verdictOf(score) : s.verdict;
+      var rows = lr ? lr.rows : s.rows;
+      var bars = rows.map(function (r) {
+        var c = (r.converted === null || r.converted === undefined) ? 0 : r.converted;
         return '<li><span>' + esc(SHORT[r.key] || r.name) + '</span>' +
-          '<span class="track"><i class="' + (r.converted >= 90 ? 'hi' : '') + '" style="width:' + Math.max(0, Math.min(100, r.converted)) + '%"></i></span>' +
-          '<b>' + F.num(r.converted) + '</b></li>';
+          '<span class="track"><i class="' + (c >= 90 ? 'hi' : '') + '" style="width:' + Math.max(0, Math.min(100, c)) + '%"></i></span>' +
+          '<b>' + (r.converted === null || r.converted === undefined ? '—' : F.num(r.converted)) + '</b></li>';
       }).join('');
       return '<article class="score-card ' + cls + '">' +
-        '<header><span class="sym">' + esc(s.symbol) + '</span><span class="ttl">' + esc(s.label) + '</span></header>' +
-        '<div class="score-big">' + F.num(s.score) + '<small>/ 100</small></div>' +
-        '<div class="verdict"><b>' + esc(s.verdict.label) + '</b><span>' + esc(s.verdict.sub) + '</span></div>' +
-        '<div class="meter"><i style="width:' + s.score + '%"></i></div>' +
+        '<header><span class="sym">' + esc(s.symbol) + '</span><span class="ttl">' + esc(s.label) + '</span>' +
+          (lr ? '<span class="badge live" style="margin-left:auto">프리마켓(추정)</span>' : '') + '</header>' +
+        '<div class="score-big">' + F.num(score) + '<small>/ 100</small></div>' +
+        '<div class="verdict"><b>' + esc(verdict.label) + '</b><span>' + esc(verdict.sub) + '</span></div>' +
+        '<div class="meter"><i style="width:' + score + '%"></i></div>' +
         '<ul class="bars">' + bars + '</ul>' +
-        '<a class="btn ghost sm" href="#/score/' + key + '">지표 자세히 →</a>' +
+        '<a class="btn ghost sm" href="#/gauge">지표 자세히 →</a>' +
         '</article>';
     }
 
@@ -169,7 +197,7 @@
     var recent = ver.slice(0, 3);
     var verHtml;
     if (!recent.length) {
-      verHtml = '<p class="sub-line dim">아직 남긴 판단이 없습니다. <a href="#/verify">첫 판단 남기기 →</a></p>';
+      verHtml = '<p class="sub-line dim">아직 남긴 판단이 없습니다. <a href="#/journal/verify">첫 판단 남기기 →</a></p>';
     } else {
       verHtml = '<ul class="list">' + recent.map(function (v) {
         return '<li>' + F.day(v.r.date) + ' · <b>' + esc(v.r.call) + '</b> · ' +
@@ -209,7 +237,7 @@
     var cases = Data.crashes.cases;
     var caseCards = cases.map(function (c) {
       var m2 = c.now_match;
-      return '<a class="case-card" href="#/crash/' + c.id + '" style="border-left-color:' + c.color + '">' +
+      return '<a class="case-card" href="#/gauge/crash/' + c.id + '" style="border-left-color:' + c.color + '">' +
         '<div class="top"><span class="nm">' + esc(c.short) + '</span><span class="dd">' + F.pct(c.dd, 1) + '</span></div>' +
         '<div class="meta">' + esc(c.name) + ' · 저점까지 ' + F.int(c.days_to_trough) + '거래일</div>' +
         (m2 ? '<div class="meta">닮은 날 ' + F.day(m2.date) + ' (고점 +' + m2.day + '일, 거리 ' + F.num(m2.distance, 2) + ') → 30일 ' + F.pct(m2.fwd30, 1) + '</div>' : '') +
@@ -230,13 +258,28 @@
         '</div>' +
         '<p>여섯 지표로 오늘의 자리를 재고, 계획한 비중으로 다시 맞춥니다.</p>' +
         '<div class="row" style="margin-top:10px">' +
+          '<span class="g-seg" id="homeBasis" role="group" aria-label="시세 기준">' +
+            '<button type="button" data-basis="close" class="' + (basis === 'close' ? 'on' : '') + '">정규장</button>' +
+            '<button type="button" data-basis="live" class="' + (basis === 'live' ? 'on' : '') + '">프리마켓</button>' +
+          '</span>' +
+          '<span class="badge ' + (basis === 'live' && liveNote && liveNote.hasLive ? 'live' : 'grey') + '">' +
+            (basis === 'live' ? (liveNote && liveNote.hasLive ? (liveNote.label || '실시간(추정)') : '실시간 값 없음 — 확정 종가') : '확정(종가) · ' + F.day(asOf)) +
+          '</span>' +
+        '</div>' +
+        (basis === 'live' && !(liveNote && liveNote.hasLive)
+          ? '<p class="note" style="color:var(--amber)">data/live.json 에 실시간 값이 없어 위 두 점수는 마지막 확정 종가 그대로입니다. 값이 들어오면 이 자리에서 다시 계산됩니다.</p>'
+          : '') +
+        '<div class="row" style="margin-top:10px">' +
           '<button class="btn" type="button" id="shareCard">오늘 자리 카드로 저장</button>' +
-          '<a class="btn ghost" href="#/verify">판단 남기기</a>' +
+          '<a class="btn ghost" href="#/journal/verify">판단 남기기</a>' +
           (badCount ? '<a class="badge red" href="#/journal">원칙 미통과 매매 ' + badCount + '건</a>' : '') +
         '</div>' +
       '</section>' +
 
       '<div class="score-grid">' + card('ndx', '') + card('sox', 'sox') + '</div>' +
+
+      statusBlock() +
+      priceStrip(basis, t) +
 
       '<div class="daily">' +
         '<div class="block">' +
@@ -259,7 +302,7 @@
 
       '<section class="panel">' +
         '<div class="panel-h"><h2>폭락 6사례</h2><span class="note">같은 눈금으로 다시 계산한 고점→저점, 그리고 지금과 가장 닮은 날</span>' +
-          '<span class="spacer"></span><a class="linkbtn" href="#/crash">전체 보기 →</a></div>' +
+          '<span class="spacer"></span><a class="linkbtn" href="#/gauge/crash">전체 보기 →</a></div>' +
         '<div class="case-grid">' + caseCards + '</div>' +
       '</section>' +
 
@@ -291,6 +334,48 @@
 
     el('#shareCard', view).addEventListener('click', function () { shareCard(); });
 
+    /* 정규장 / 프리마켓 — 고른 기준을 저장하고 이 화면을 다시 그린다(매수 지표와 같은 값) */
+    els('[data-basis]', view).forEach(function (b) {
+      b.addEventListener('click', function () {
+        if (!w.Basis) return;
+        Basis.set(b.getAttribute('data-basis'));
+        V.home(liveView());
+      });
+    });
+
+    /* 실시간 새로고침 — live.json 을 다시 읽어 값·기준 시각을 갱신한다(원본 HomeScreen 141행) */
+    var rf = el('#homeRefresh', view);
+    if (rf) rf.addEventListener('click', function () {
+      if (!w.Basis) return;
+      rf.disabled = true;
+      rf.textContent = '불러오는 중…';
+      Basis.load(true).then(function () {
+        V.home(liveView());
+        toast(Basis.status().hasLive ? '실시간 값을 다시 읽었습니다.' : 'live.json 이 없어 확정 종가로 남습니다.');
+      });
+    });
+
+    /* 관심 종목 추가/삭제 */
+    var wf = el('#watchForm', view);
+    if (wf) wf.addEventListener('submit', function (e) {
+      e.preventDefault();
+      var inp = el('#watchSym', view);
+      var sym = (inp.value || '').trim().toUpperCase();
+      if (!sym || !/^[A-Z0-9.\-]{1,8}$/.test(sym)) { toast('티커를 영문·숫자로 적어 주세요.'); return; }
+      var list = S.get('watch', []);
+      if (list.indexOf(sym) < 0) list.push(sym);
+      S.set('watch', list);
+      inp.value = '';
+      V.home(liveView());
+    });
+    els('[data-unwatch]', view).forEach(function (b) {
+      b.addEventListener('click', function () {
+        var sym = b.getAttribute('data-unwatch');
+        S.set('watch', S.get('watch', []).filter(function (x) { return x !== sym; }));
+        V.home(liveView());
+      });
+    });
+
     el('#subForm', view).addEventListener('submit', function (e) {
       e.preventDefault();
       var mail = el('#subMail', view).value.trim();
@@ -315,6 +400,87 @@
       toast('발송 기능은 2차 판으로 미뤘습니다.');
     });
   };
+
+  /* ------------------------------------------------ 홈: 시세 상태 줄(원본 HomeScreen 90~150행) */
+  function statusBlock() {
+    var live = w.Basis ? Basis.status() : { hasLive: false };
+    var mode = live.hasLive ? '실시간 체결가' : '종가 기준';
+    var session = live.hasLive ? (live.session || '프리마켓') : '정규장';
+    var at = live.hasLive ? (live.hhmm || '') : F.day(Data.asOf());
+    return '<section class="panel tight" style="margin-bottom:12px">' +
+      '<div class="row" style="justify-content:space-between">' +
+        '<div class="row"><b class="mono" style="font-size:19px">' + (at || '아직 안 받아옴') + '</b>' +
+          '<span class="badge ' + (live.hasLive ? 'live' : 'grey') + '">' + mode + '</span>' +
+          '<span class="badge grey">' + esc(session) + '</span></div>' +
+        '<button class="btn primary sm" type="button" id="homeRefresh">실시간 새로고침</button>' +
+      '</div>' +
+      '<p class="note">갱신 ' + (at || '—') + ' · ' + esc(session) + ' · ' +
+        (live.hasLive ? '여섯 지표 가중 평균' : '마지막 확정 봉 기준') + '</p>' +
+      '<p class="note">실시간이 주 수단입니다. 확정 스냅샷(JSON)은 인터넷이 없거나 실시간이 막힐 때 쓰는 보조 수단입니다.</p>' +
+    '</section>';
+  }
+
+  /* ------------------------------------------------ 홈: 내 종목 시세 }/>
+  /* 보유 + 관심 종목 가격을 고른 기준으로 보여 준다. 색은 앱 규칙(국내 상승 빨강·하락 파랑 / 미국 상승 초록·하락 빨강). */
+  function priceStrip(basis, t) {
+    var syms = [];
+    function add(s) { s = String(s || '').trim().toUpperCase(); if (s && s !== 'CASH' && syms.indexOf(s) < 0) syms.push(s); }
+    holdings().forEach(function (r) { add(r.sym); });
+    S.get('watch', []).forEach(add);
+    var watch = S.get('watch', []);
+
+    if (!syms.length) {
+      return '<section class="panel tight" style="margin-bottom:12px">' +
+        '<div class="panel-h"><h2>내 종목 시세</h2><span class="note">보유·관심 종목 가격</span></div>' +
+        '<p class="note">종목을 추가하면 가격이 표시됩니다. <a href="#/rebalance">리밸런싱에서 보유 넣기 →</a></p>' +
+        '<form id="watchForm" class="row" style="margin-top:8px">' +
+          '<input id="watchSym" placeholder="관심 티커 (예: NVDA)" aria-label="관심 티커" ' +
+            'style="flex:1;min-width:160px;background:var(--sunken,#0d1428);border:1px solid var(--line2);border-radius:9px;color:var(--tx);padding:8px 10px;font:inherit">' +
+          '<button class="btn sm" type="submit">추가</button>' +
+        '</form></section>';
+    }
+
+    function snapClose(sym) {
+      if (sym === 'TQQQ') return t.ndx.detail.close;
+      if (sym === 'SOXL') return t.sox.detail.close;
+      return null;
+    }
+
+    var rows = syms.map(function (sym) {
+      var q = w.Basis ? Basis.quote(sym) : null;
+      var closePx = (q && (q.close || q.prevClose)) || snapClose(sym);
+      var useLive = basis === 'live' && q;
+      var px = useLive ? q.price : closePx;
+      var chg = useLive ? q.changePct : null;
+      var tag = useLive
+        ? ((q.session || '최근 체결') + ' ' + (q.hhmm || ''))
+        : (closePx ? '종가 ' + (sym === 'TQQQ' || sym === 'SOXL' ? F.day(Data.asOf()) : '') : '값 없음');
+      var color = 'var(--tx2)';
+      if (chg !== null && chg !== undefined) {
+        var kr = /^\d{6}$/.test(sym);
+        color = chg > 0 ? (kr ? 'var(--red)' : 'var(--green)') : chg < 0 ? (kr ? 'var(--blue)' : 'var(--red)') : 'var(--tx2)';
+      }
+      return '<tr><td><b>' + esc(sym) + '</b>' + (watch.indexOf(sym) >= 0
+          ? ' <button class="linkbtn del" type="button" data-unwatch="' + esc(sym) + '" aria-label="관심 종목에서 지우기">×</button>' : '') + '</td>' +
+        '<td class="mono" style="color:' + (px ? 'var(--green)' : 'var(--dim)') + '">' +
+          (px ? '$' + (px >= 1000 ? px.toFixed(0) : px.toFixed(2)) : '—') + '</td>' +
+        '<td class="mono" style="color:' + color + '">' + (chg === null || chg === undefined ? '—' : F.signed(chg, 2) + '%') + '</td>' +
+        '<td class="dim small">' + esc(tag) + '</td></tr>';
+    }).join('');
+
+    return '<section class="panel tight" style="margin-bottom:12px">' +
+      '<div class="panel-h"><h2>내 종목 시세</h2><span class="note">' +
+        (basis === 'live' ? '프리마켓(최근 체결) 기준' : '정규장 종가 기준') + ' · 5분 갱신</span></div>' +
+      '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>종목</th><th>가격</th><th>등락</th><th>기준</th></tr></thead><tbody>' +
+        rows + '</tbody></table></div>' +
+      '<p class="note">가격은 연두색으로 표시합니다. 등락 색은 앱 규칙입니다 — 국내는 상승 빨강·하락 파랑, 미국은 상승 초록·하락 빨강. ' +
+        '값이 없는 종목은 ‘—’로 두고 지어내지 않습니다.</p>' +
+      '<form id="watchForm" class="row" style="margin-top:8px">' +
+        '<input id="watchSym" placeholder="관심 티커 추가 (예: NVDA)" aria-label="관심 티커" ' +
+          'style="flex:1;min-width:160px;background:var(--sunken,#0d1428);border:1px solid var(--line2);border-radius:9px;color:var(--tx);padding:8px 10px;font:inherit">' +
+        '<button class="btn sm" type="submit">추가</button>' +
+      '</form></section>';
+  }
 
   /* 아침 메일 미리보기 — 오늘 화면의 네 칸을 메일 모양으로 */
   function mailPreviewHtml(pf, now, closest, ver) {
@@ -792,7 +958,7 @@
         analogFilter = c.id;
         analogFocus = m.dd;
         analogFocusNote = esc(c.short + ' ' + c.name) + ' · ' + F.day(m.date);
-        location.hash = '#/verify';
+        location.hash = '#/journal/verify';
       });
     }
 
@@ -1068,10 +1234,17 @@
   };
 
   /* ------------------------------------------------------------ 기록(매매일지) + 원칙 */
-  V.journal = function (view) {
+  V.journal = function (view, sub) {
+    var verifyOpen = sub === 'verify';
     var all = journal();
     var list = all.slice().sort(function (a, b) { return a.date < b.date ? 1 : a.date > b.date ? -1 : 0; });
     var badCount = all.filter(function (r) { return r.principles && r.principles.pass === false; }).length;
+    var vrows0 = verifyRows();
+    var vStat = {
+      ok: vrows0.filter(function (x) { return x.grade === 'ok'; }).length,
+      no: vrows0.filter(function (x) { return x.grade === 'no'; }).length,
+      wait: vrows0.filter(function (x) { return x.grade === 'wait'; }).length
+    };
     var shown = journalOnlyBad ? list.filter(function (r) { return r.principles && r.principles.pass === false; }) : list;
     var editRec = journalEditId ? all.filter(function (r) { return r.id === journalEditId; })[0] : null;
     var pr = principles();
@@ -1097,7 +1270,7 @@
         ? (r.principles.pass ? '<span class="badge good">원칙 통과</span>'
           : '<span class="badge red">미통과 ' + r.principles.checked + '/' + r.principles.total + '</span>')
         : '<span class="badge grey">기록 없음</span>';
-      return '<tr>' +
+      return '<tr' + (journalFocus === r.id ? ' class="focus"' : '') + '>' +
         '<td class="mono">' + F.day(r.date) + '</td>' +
         '<td><b>' + esc(r.sym) + '</b></td>' +
         '<td><span class="badge ' + (r.side === '매수' ? 'blue' : 'amber') + '">' + esc(r.side) + '</span></td>' +
@@ -1107,7 +1280,8 @@
         '<td>' + snapHtml + '</td>' +
         '<td>' + prBadge + '</td>' +
         '<td class="wrap">' + (r.memo ? esc(r.memo) : '<span class="dim">—</span>') + '</td>' +
-        '<td><button class="linkbtn" data-edit="' + r.id + '" type="button">수정</button>' +
+        '<td><button class="linkbtn" data-vjump="' + r.id + '" type="button">닮은 날·채점</button>' +
+          '<button class="linkbtn" data-edit="' + r.id + '" type="button">수정</button>' +
           '<button class="linkbtn del" data-rm="' + r.id + '" type="button">삭제</button></td>' +
         '</tr>';
     }).join('');
@@ -1122,8 +1296,9 @@
 
     view.innerHTML =
       '<section class="hero"><div class="crumb"><a href="#/">홈</a> / 기록</div>' +
-        '<h1>매매일지</h1>' +
-        '<p>저장하기 전에 내 원칙을 한 번 통과시킵니다. 산 날의 점수와 낙폭이 함께 남습니다. 기록은 이 브라우저에만 저장됩니다.</p></section>' +
+        '<h1>기록</h1>' +
+        '<p>내 매매일지와 그 기록의 채점을 한 자리에 두었습니다. 저장하기 전에 내 원칙을 통과시키고, 산 날의 점수·낙폭이 함께 남습니다. ' +
+          '아래 <b>검증 기록(과거 대입)</b>에서 매매 하나를 누르면 그 매매의 닮은 날과 30거래일 뒤 채점으로 이어집니다. 기록은 이 브라우저에만 저장됩니다.</p></section>' +
 
       '<div class="panel">' +
         '<div class="panel-h"><h2>' + (editRec ? '기록 수정' : '기록 추가') + '</h2>' +
@@ -1179,7 +1354,19 @@
             '<th>날짜</th><th>티커</th><th>구분</th><th>수량</th><th>가격</th><th>금액</th><th>그날 점수 (TQQQ / SOXL)</th><th>원칙</th><th>메모</th><th></th>' +
           '</tr></thead><tbody>' + rowsHtml + '</tbody></table></div>'
           : '<div class="empty">' + (journalOnlyBad ? '원칙을 통과하지 못한 매매가 없습니다.' : '아직 기록이 없습니다. 위에서 첫 매매를 남겨 보세요.') + '</div>') +
-      '</div>';
+      '</div>' +
+
+      '<section class="panel g-sec" id="verifySec">' +
+        '<button class="g-sechead" type="button" id="vToggle" aria-expanded="' + (verifyOpen ? 'true' : 'false') + '">' +
+          '<span class="t">검증 기록 (과거 대입)' +
+            '<span class="badge ' + (vStat.no ? 'red' : 'grey') + '" style="margin-left:6px">적중 ' + vStat.ok + ' · 빗나감 ' + vStat.no + ' · 대기 ' + vStat.wait + '</span>' +
+            '<span class="mark">' + (verifyOpen ? '접기 ▴' : '펼치기 ▾') + '</span></span>' +
+          '<span class="s">사례별 가장 닮은 하루 · 확증편향 짝 · 같은 경과일 · 산점도 · 내 기록의 닮은 날과 채점. 눌러서 폅니다.</span>' +
+        '</button>' +
+        '<div class="g-secbody" id="verifyBody"' + (verifyOpen ? '' : ' hidden') + '>' +
+          (verifyOpen ? '' : '<div class="loading">펼치면 계산합니다.</div>') +
+        '</div>' +
+      '</section>';
 
     /* 원칙 체크 상태 — 저장할 때 읽는다 */
     function checkedIds() {
@@ -1227,8 +1414,44 @@
 
     el('#badFilter', view).addEventListener('click', function () {
       journalOnlyBad = !journalOnlyBad;
-      V.journal(liveView());
+      V.journal(liveView(), 'journal');
     });
+
+    /* 검증 기록 접기/펴기 — 펼 때 처음 계산한다(무거운 산점도) */
+    var vToggle = el('#vToggle', view);
+    if (vToggle) vToggle.addEventListener('click', function () {
+      var body = el('#verifyBody', view);
+      var open = body.hasAttribute('hidden');
+      if (open) body.removeAttribute('hidden'); else body.setAttribute('hidden', '');
+      vToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+      var mark = vToggle.querySelector('.mark');
+      if (mark) mark.textContent = open ? '접기 ▴' : '펼치기 ▾';
+      if (open) V.verify(body, { embedded: true });
+    });
+
+    /* 매매 하나 → 그 매매의 닮은 날·채점으로 */
+    on(view, 'click', '[data-vjump]', function (e, t) {
+      var id = t.getAttribute('data-vjump');
+      journalFocus = id;
+      verifyTradeFocus = id;
+      var body = el('#verifyBody', view);
+      if (body && body.hasAttribute('hidden')) {
+        body.removeAttribute('hidden');
+        var vt = el('#vToggle', view);
+        if (vt) { vt.setAttribute('aria-expanded', 'true'); var mk = vt.querySelector('.mark'); if (mk) mk.textContent = '접기 ▴'; }
+      }
+      V.verify(body, { embedded: true });
+      var row = body.querySelector('[data-trade="' + id + '"]');
+      if (row) row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    });
+
+    if (verifyOpen) {
+      V.verify(el('#verifyBody', view), { embedded: true });
+      setTimeout(function () {
+        var sec = el('#verifySec', view);
+        if (sec) sec.scrollIntoView({ block: 'start' });
+      }, 60);
+    }
 
     el('#prinAdd', view).addEventListener('click', function () {
       var arr = principles();
@@ -1272,7 +1495,9 @@
   };
 
   /* ------------------------------------------------------------ 검증 기록(과거 대입) */
-  V.verify = function (view) {
+  V.verify = function (view, opts) {
+    opts = opts || {};
+    function render() { V.verify(view, opts); }
     var now = Data.now();
     var all = Data.analog.points;
     var cases = Data.crashes.cases;
@@ -1380,14 +1605,15 @@
     var tradeMatch = trades.map(function (t) {
       var n = Data.analogNear(t.dd, 1)[0];
       var bad = t.r.principles && t.r.principles.pass === false;
-      return '<tr>' +
+      return '<tr data-trade="' + t.r.id + '"' + (verifyTradeFocus === t.r.id ? ' class="focus"' : '') + '>' +
         '<td class="mono">' + F.day(t.r.date) + '</td>' +
         '<td><b>' + esc(t.r.sym) + '</b> <span class="badge ' + (t.r.side === '매수' ? 'blue' : 'amber') + '">' + esc(t.r.side) + '</span>' +
           (bad ? ' <span class="badge red">원칙 미통과</span>' : '') + '</td>' +
         '<td class="mono">' + F.pct(t.dd, 1) + '</td>' +
         '<td class="mono">' + (t.ret === null ? '<span class="dim">대기</span>' : F.pct(t.ret, 1)) + '</td>' +
         '<td>' + (n ? esc(Data.caseName(n.id)) + ' <span class="dim small">+' + n.day + '일 · 30일 뒤 ' + F.pct(n.fwd30, 1) + '</span>' : '—') + '</td>' +
-        '<td>' + (t.ret === null ? '<span class="badge grey">대기 중</span>' : gradeBadge(t.r.side, t.ret)) + '</td>' +
+        '<td>' + (t.ret === null ? '<span class="badge grey">대기 중</span>' : gradeBadge(t.r.side, t.ret)) +
+          ' <button class="linkbtn" type="button" data-back="' + t.r.id + '">일지로</button></td>' +
         '</tr>';
     }).join('');
 
@@ -1410,10 +1636,10 @@
     }).join('');
 
     view.innerHTML =
-      '<section class="hero"><div class="crumb"><a href="#/">홈</a> / 검증 기록</div>' +
+      (opts.embedded ? '' : '<section class="hero"><div class="crumb"><a href="#/">홈</a> / <a href="#/journal">기록</a> / 검증 기록</div>' +
         '<h1>검증 기록</h1>' +
         '<p>사례마다 지금과 가장 닮은 하루를 찾아 그 뒤를 봅니다. 같은 낙폭으로도, 같은 경과일로도 값이 다르니 두 눈금을 같이 보세요.</p>' +
-        '<p class="byline">글 · Verdictjang</p></section>' +
+        '<p class="byline">글 · Verdictjang</p></section>') +
 
       '<div class="panel">' +
         '<div class="panel-h"><h2>사례별 가장 가까운 하루</h2>' +
@@ -1531,22 +1757,22 @@
 
     on(view, 'click', '[data-hor]', function (e, t) {
       analogHorizon = Number(t.getAttribute('data-hor'));
-      V.verify(liveView());
+      render();
     });
     on(view, 'click', '[data-case]', function (e, t) {
       analogFilter = t.getAttribute('data-case');
-      V.verify(liveView());
+      render();
     });
 
     var fr = el('#focusReset', view);
     if (fr) fr.addEventListener('click', function () {
       analogFocus = null; analogFocusNote = ''; analogFilter = 'all';
-      V.verify(liveView());
+      render();
     });
 
     el('#vBadFilter', view).addEventListener('click', function () {
       verifyOnlyBad = !verifyOnlyBad;
-      V.verify(liveView());
+      render();
     });
 
     el('#vForm', view).addEventListener('submit', function (e) {
@@ -1561,7 +1787,7 @@
       var arr = verifyList();
       arr.push(rec);
       S.set(VERIFY_KEY, arr);
-      V.verify(liveView());
+      render();
       toast('판단을 남겼습니다. 30거래일 뒤에 채점됩니다.');
     });
 
@@ -1569,9 +1795,15 @@
       var id = t.getAttribute('data-vdel');
       confirmBox({ title: '이 판단을 지울까요?', body: '지운 기록은 되돌릴 수 없습니다.', ok: '지운다' }, function () {
         S.set(VERIFY_KEY, verifyList().filter(function (r) { return r.id !== id; }));
-        V.verify(liveView());
+        render();
         toast('지웠습니다.');
       });
+    });
+
+    /* 검증 → 일지: 그 매매를 일지에서 강조해 보여 준다(두 섹션이 서로 이어짐) */
+    on(view, 'click', '[data-back]', function (e, t) {
+      journalFocus = t.getAttribute('data-back');
+      location.hash = '#/journal';
     });
   };
 

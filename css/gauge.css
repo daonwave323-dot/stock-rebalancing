@@ -1,0 +1,123 @@
+/* 매수 지표 탭 — 원본 GaugeScreen 배치를 웹으로 옮긴 화면.
+   색은 기존 변수만 쓴다(새 색을 정의하지 않는다). 값이 없는 테마를 위해 fallback 만 둔다. */
+.g-card{padding-bottom:14px}
+.g-card .g-head{display:flex;align-items:flex-start;gap:8px;flex-wrap:wrap}
+.g-card .g-head h2{margin:0;font-size:16px;letter-spacing:-.2px}
+.g-card .g-head .note{margin:0}
+.g-score{display:flex;align-items:flex-end;gap:8px;margin:6px 0 0}
+.g-score b{font-size:54px;line-height:1;font-weight:800;letter-spacing:-2.5px;font-variant-numeric:tabular-nums}
+.g-score span{font-size:14px;color:var(--tx2);padding-bottom:9px}
+.g-verdict{margin:4px 0 0;font-size:20px;font-weight:700;letter-spacing:-.3px}
+.g-verdict-sub{color:var(--dim);font-size:12.5px;margin:2px 0 0}
+.g-bar{position:relative;height:20px;margin:14px 0 2px;border-radius:99px;background:var(--sunken,#0d1428);border:1px solid var(--line);overflow:hidden}
+.g-bar i{display:block;height:100%;background:linear-gradient(90deg,var(--blue),var(--green));border-radius:99px;transition:width .18s}
+.g-bar em{position:absolute;top:-3px;bottom:-3px;width:2px;background:var(--tx2);left:90%}
+.g-scale{display:flex;justify-content:space-between;font-size:10.5px;color:var(--dim);font-variant-numeric:tabular-nums}
+.g-scale span:nth-child(3){color:var(--tx2);font-weight:700}
+.g-hint{font-size:12.5px;color:var(--amber);margin:8px 0 0}
+.g-rarity{margin:12px 0 0;font-size:14.5px;font-weight:700;color:var(--amber)}
+.g-contrib{margin:6px 0 0;font-size:12px;color:var(--dim)}
+.g-stat{margin:0 0 6px;font-size:14.5px;line-height:1.5}
+.g-stat.up{color:var(--green);font-weight:700}
+.g-stat .num{font-variant-numeric:tabular-nums}
+.g-radar{width:100%;margin:4px 0 0}
+.g-radar svg{width:100%;height:auto;display:block;max-height:340px}
+.g-state{margin:6px 0 0;font-size:12.5px;color:var(--tx2)}
+.g-state b{color:var(--tx)}
+.g-state .good{color:var(--green);font-weight:700}
+.g-state .mid{color:var(--amber);font-weight:700}
+.g-state .bad{color:var(--red);font-weight:700}
+.g-sub{font-size:15px;font-weight:700;margin:0 0 2px;letter-spacing:-.2px}
+.g-sub + .g-cap{color:var(--dim);font-size:11.5px;margin:0 0 6px}
+.g-sub.mt{margin-top:16px}
+.g-sec{padding:0;overflow:hidden}
+.g-sechead{display:block;width:100%;text-align:left;background:none;border:0;color:inherit;font:inherit;padding:16px 18px;cursor:pointer;min-height:64px}
+.g-sechead:hover{background:rgba(255,255,255,.02)}
+.g-sechead .t{display:flex;align-items:center;gap:8px;font-size:16px;font-weight:700;letter-spacing:-.2px}
+.g-sechead .t .mark{margin-left:auto;font-size:12px;font-weight:400;color:var(--tx2)}
+.g-sechead .s{display:block;color:var(--dim);font-size:11.5px;margin:4px 0 0;line-height:1.45}
+.g-secbody{padding:0 18px 16px}
+.g-secbody[hidden]{display:none}
+.g-secbody > .panel{background:var(--sunken,#0d1428);box-shadow:none;margin:0 0 12px}
+.g-secbody > .panel:last-child{margin-bottom:0}
+.g-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.g-ind{padding:10px 0 4px;border-top:1px solid var(--line)}
+.g-ind:first-of-type{border-top:0}
+.g-ind .top{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.g-ind .top b{font-size:12.5px}
+.g-ind .top .w{color:var(--dim);font-size:11px}
+.g-ind .top .sp{flex:1}
+.g-ind input[type=number]{width:88px;background:var(--sunken,#0d1428);border:1px solid var(--line2);border-radius:8px;color:var(--green);padding:5px 8px;font:inherit;font-size:13px;font-weight:700;text-align:right;font-variant-numeric:tabular-nums}
+.g-ind input[type=range]{width:100%;margin:8px 0 0;accent-color:var(--green);height:24px}
+.g-ind .ends{display:flex;justify-content:space-between;font-size:10.5px;color:var(--dim)}
+.g-tone-good{color:var(--green)}
+.g-tone-blue{color:var(--blue)}
+.g-tone-purple{color:var(--purple)}
+.g-tone-amber{color:var(--amber)}
+.g-tone-grey{color:var(--tx2)}
+.g-tiles{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:8px}
+.g-tile{background:var(--sunken,#0d1428);border:1px solid var(--line);border-radius:10px;padding:9px 10px}
+.g-tile .lab{font-size:11px;color:var(--dim)}
+.g-tile .val{display:flex;align-items:center;gap:6px;margin-top:3px;font-size:12.5px;font-weight:700}
+.g-tile .dot{width:8px;height:8px;border-radius:50%;flex:0 0 auto}
+.g-tile .det{font-size:10.5px;color:var(--dim);margin-top:2px}
+.g-crashrow{cursor:pointer}
+.g-crashrow:hover{background:rgba(255,255,255,.03)}
+.g-case-detail{margin-top:12px}
+.g-chip-target{display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:99px;border:1px solid var(--line2);background:var(--panel2);color:var(--tx2);font-size:12.5px;font-weight:700;cursor:pointer;min-height:40px}
+.g-chip-target.on{background:var(--green);border-color:var(--green);color:var(--bg)}
+.g-price{font-size:22px;font-weight:800;font-variant-numeric:tabular-nums;color:var(--blue);letter-spacing:-.5px}
+.g-basis{font-size:11.5px;color:var(--dim);margin:4px 0 0}
+.g-basis .live{color:var(--amber)}
+.g-mini{font-size:11.5px;color:var(--dim)}
+.g-seg{display:inline-flex;gap:3px;padding:3px;border-radius:12px;background:var(--sunken,#0d1428)}
+.g-seg button{border:0;background:none;color:var(--tx2);font:inherit;font-size:12.5px;font-weight:700;padding:8px 12px;border-radius:9px;cursor:pointer;min-height:38px}
+.g-seg button.on{background:var(--green);color:var(--bg)}
+.g-note-strong{font-size:12.5px;color:var(--tx2);margin:6px 0 0;line-height:1.55}
+.g-track{display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--line);font-size:12.5px}
+.g-track:last-child{border-bottom:0}
+.g-track .nm{flex:1;color:var(--tx2)}
+.g-track .df{font-variant-numeric:tabular-nums;font-weight:700}
+.g-rule{display:flex;gap:10px;align-items:baseline;padding:7px 0;border-bottom:1px solid var(--line)}
+.g-rule:last-child{border-bottom:0}
+.g-rule .tag{flex:0 0 64px;text-align:center;font-size:10.5px;font-weight:700;border:1px solid var(--line2);border-radius:7px;padding:3px 4px;color:var(--tx2)}
+.g-rule .tx{font-size:12.5px;font-weight:700}
+.g-rule .ds{display:block;color:var(--dim);font-size:11.5px;font-weight:400;margin-top:2px}
+.g-gloss{margin-top:12px}
+.g-gloss dt{font-size:13px;font-weight:700;margin:10px 0 2px}
+.g-gloss dd{margin:0;font-size:11.5px;color:var(--tx2);line-height:1.6}
+.g-gloss dd .k{color:var(--dim)}
+.g-jump{font-size:12px;color:var(--blue);background:none;border:0;font:inherit;font-size:12px;cursor:pointer;padding:2px 4px}
+@media (max-width:680px){
+  .g-score b{font-size:44px}
+  .g-verdict{font-size:17px}
+  .g-tiles{grid-template-columns:1fr}
+  .g-sechead{padding:14px}
+  .g-secbody{padding:0 14px 14px}
+  .g-ind input[type=number]{width:76px}
+}
+
+/* 기록 화면 안 검증 섹션 — 일지에서 누른 매매를 강조 */
+table.tbl tr.focus td{background:rgba(106,154,224,.14)}
+
+/* 글 탭 — content/ 문서 카드 */
+.doc-card{display:block;background:var(--raise,#111a30);border:1px solid var(--line);border-radius:12px;padding:14px;color:var(--tx);text-decoration:none}
+.doc-card:hover{text-decoration:none;border-color:var(--line2)}
+.doc-card h3{margin:6px 0 6px;font-size:15px;letter-spacing:-.2px}
+.doc-card p{margin:0;color:var(--tx2);font-size:12.5px}
+.doc-card .tag{font-size:11px;color:var(--blue)}
+.doc-card .doc-dl{display:inline-block;margin-top:8px;font-size:11.5px;color:var(--green)}
+.md-body p{font-size:15px;line-height:1.85;color:#dbe3f4;margin:0 0 14px}
+.md-body h2{font-size:19px;margin:22px 0 8px;letter-spacing:-.3px}
+.md-body h3{font-size:16px;margin:18px 0 6px}
+.md-body ul{margin:0 0 14px;padding-left:20px;color:var(--tx2);font-size:14.5px;line-height:1.8}
+.md-body blockquote{margin:0 0 14px;padding:8px 12px;border-left:3px solid var(--line2);color:var(--tx2);font-size:13.5px}
+.md-body code{background:var(--sunken,#0d1428);padding:1px 5px;border-radius:5px;font-family:var(--mono);font-size:12.5px}
+.md-body hr{border:0;border-top:1px solid var(--line);margin:18px 0}
+
+/* 글쓰기 — 모바일에서도 본문이 넓게 */
+#pBody{width:100%;min-height:180px;background:var(--sunken,#0d1428);border:1px solid var(--line2);border-radius:9px;color:var(--tx);padding:10px 12px;font:inherit;font-size:14px;line-height:1.7;resize:vertical}
+#pBody:focus{outline:2px solid var(--line2)}
+#pFiles{width:100%;color:var(--tx2);font-size:12.5px;padding:6px 0}
+#pFiles::file-selector-button{background:var(--panel2);color:var(--tx);border:1px solid var(--line2);border-radius:8px;padding:7px 10px;margin-right:8px;font:inherit;font-size:12.5px;cursor:pointer}
+@media (max-width:680px){ #pBody{min-height:220px;font-size:15px} }

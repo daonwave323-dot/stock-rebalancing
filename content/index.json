@@ -1,0 +1,13 @@
+{
+  "note": "글 목록 — content/ 아래 파일을 올리고 이 파일에 한 줄 추가하면 사이트 '글' 탭에 나타납니다.",
+  "items": [
+    {
+      "id": "note-value-gauge",
+      "kind": "notes",
+      "path": "content/notes/2026-11-27-value-gauge.md",
+      "title": "밸류게이지, 여섯 지표를 한 장으로 읽는 법",
+      "date": "2026-11-27",
+      "summary": "점수 하나보다 여섯 축의 모양이 먼저다 — 이 사이트의 매수 지표 화면을 읽는 순서."
+    }
+  ]
+}
