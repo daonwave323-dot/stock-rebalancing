@@ -4,11 +4,14 @@
 
   var NAV = [
     { href: '#/', label: '홈', key: 'home' },
+    { href: '#/market', label: '증시', key: 'market' },
+    { href: '#/calendar', label: '일정', key: 'calendar' },
     { href: '#/crash', label: '폭락 사례', key: 'crash' },
     { href: '#/rebalance', label: '리밸런싱', key: 'rebalance' },
     { href: '#/journal', label: '기록', key: 'journal' },
     { href: '#/verify', label: '검증 기록', key: 'verify' },
-    { href: '#/readings', label: '글', key: 'readings' }
+    { href: '#/readings', label: '글', key: 'readings' },
+    { href: '#/tools', label: '도구', key: 'tools' }
   ];
 
   function buildNav() {
@@ -21,6 +24,9 @@
   function activeKey(path) {
     if (path === '' || path === '/') return 'home';
     if (path.indexOf('/score') === 0) return 'home';
+    if (path.indexOf('/market') === 0) return 'market';
+    if (path.indexOf('/calendar') === 0) return 'calendar';
+    if (path.indexOf('/tools') === 0) return 'tools';
     if (path.indexOf('/crash') === 0) return 'crash';
     if (path.indexOf('/rebalance') === 0) return 'rebalance';
     if (path.indexOf('/journal') === 0) return 'journal';
@@ -56,6 +62,9 @@
     try {
       if (parts.length === 0) Views.home(host);
       else if (parts[0] === 'score') Views.score(host, parts[1]);
+      else if (parts[0] === 'market') Views.market(host, parts.slice(1));
+      else if (parts[0] === 'calendar') Views.calendar(host);
+      else if (parts[0] === 'tools') Views.tools(host, parts);
       else if (parts[0] === 'crash') {
         if (parts[1]) Views.crashDetail(host, parts[1]);
         else Views.crash(host);
