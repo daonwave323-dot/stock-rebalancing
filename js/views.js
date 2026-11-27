@@ -1302,6 +1302,12 @@
 
     /* 확증편향 방지 짝 (Crash.contrast) */
     var contrastHtml = '';
+    /* 그 사례 경로(252거래일)에 있는 가장 먼 지평을 적는다 — 없는 값을 '180거래일 —'로 두지 않는다 */
+    function fwdFar(m) {
+      if (m.fwd180 !== null && m.fwd180 !== undefined) return '180거래일 ' + F.pct(m.fwd180, 1);
+      if (m.fwd90 !== null && m.fwd90 !== undefined) return '90거래일 ' + F.pct(m.fwd90, 1);
+      return '30거래일 ' + F.pct(m.fwd30, 1);
+    }
     if (contrast) {
       var cd = contrast.deep, cf = contrast.fast;
       contrastHtml =
@@ -1310,15 +1316,16 @@
             '<span class="badge blue">' + esc(cd.short) + '</span></div>' +
             '<p class="sub-line">' + esc(cd.name) + ' · 최대 ' + F.pct(cd.caseDd, 1) + '</p>' +
             '<p class="sub-line dim small">' + F.day(cd.date) + ' (고점 +' + cd.day + '일) · 거리 ' + F.num(cd.distance, 2) +
-            ' → 180거래일 ' + F.pct(cd.fwd180, 1) + '</p></div>' +
+            ' → ' + fwdFar(cd) + '</p></div>' +
           '<div class="panel tight"><div class="panel-h"><h3 style="margin:0;font-size:14px">빨리 회복한 쪽</h3>' +
             '<span class="badge good">' + esc(cf.short) + '</span></div>' +
             '<p class="sub-line">' + esc(cf.name) + ' · 저점까지 ' + cf.caseDaysToTrough + ' · 회복 ' + cf.caseDaysToRecovery + '거래일</p>' +
             '<p class="sub-line dim small">' + F.day(cf.date) + ' (고점 +' + cf.day + '일) · 거리 ' + F.num(cf.distance, 2) +
-            ' → 180거래일 ' + F.pct(cf.fwd180, 1) + '</p></div>' +
+            ' → ' + fwdFar(cf) + '</p></div>' +
         '</div>' +
         '<p class="note">닮은 정도는 ' + F.num(cd.distance, 2) + ' 대 ' + F.num(cf.distance, 2) +
-        '인데 그 뒤 방향은 반대입니다. 한쪽만 보면 확증편향이 생깁니다.</p>';
+        '입니다. 사례 경로가 252거래일까지만 있어 뒤를 오래 볼 수 있는 쪽과 없는 쪽이 갈리므로, 있는 값 중 가장 먼 지평을 적었습니다. ' +
+        '한쪽만 보면 확증편향이 생깁니다.</p>';
     }
 
     /* 같은 경과일(+N) 비교 */
