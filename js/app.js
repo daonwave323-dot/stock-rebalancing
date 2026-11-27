@@ -41,6 +41,19 @@
     return { parts: parts, path: '/' + parts.join('/') };
   }
 
+  /* 화면에 처음 들어갈 때만 받는 스크립트 — 첫 화면을 가볍게 둔다 */
+  function ensureScripts(list) {
+    return Promise.all(list.map(function (src) {
+      if (document.querySelector('script[data-lazy="' + src + '"]')) return Promise.resolve();
+      return new Promise(function (res) {
+        var el = document.createElement('script');
+        el.src = src; el.setAttribute('data-lazy', src);
+        el.onload = res; el.onerror = res;
+        document.body.appendChild(el);
+      });
+    }));
+  }
+
   var lastPath = null;
 
   function render(scroll) {
@@ -92,6 +105,11 @@
       }
       else if (parts[0] === 'rebalance') Views.rebalance(host);
       else if (parts[0] === 'journal') Views.journal(host, parts[1]);
+      else if ((parts[0] === 'readings' || parts[0] === 'note') && !w.PostStore) {
+        /* 글 화면 코드는 그 탭에 처음 들어갈 때 받는다 */
+        var want = parsed.path;
+        ensureScripts(['js/content.js', 'js/poststore-api.js']).then(function () { if (parse().path === want) render(false); });
+      }
       else if (parts[0] === 'readings') Views.readings(host);
       else if (parts[0] === 'read') Views.article(host, parts[1]);
       else if (parts[0] === 'note') Views.note(host, parts[1]);
