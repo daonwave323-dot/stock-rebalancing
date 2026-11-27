@@ -183,6 +183,127 @@
       '</section>';
   }
 
+  /* ------------------------------------------------------------ 보기 형식 (카드 / 목록)
+   * 카드: 지금까지의 묶음 그대로. 목록: 분류마다 묶어 제목만 한 줄로.
+   * 보기 선택은 이 브라우저에 남기고(stockrebal.postsView), 한 번에 카드 10 · 목록 20개씩 보여 준다. */
+  var VKEY = 'postsView';
+  var PAGE = { card: 10, list: 20 };
+  var shown = 0;          /* 지금 화면에 보여 줄 글 수(더 보기로 늘어난다) */
+  var curData = null;     /* 마지막으로 계산한 글 묶음 — 보기 전환·더 보기 때 다시 그린다 */
+
+  function viewMode() { return S.get(VKEY, 'card') === 'list' ? 'list' : 'card'; }
+
+  function cardHref(it) {
+    var pdf = isPdf(it), img = isImage(it);
+    return (it.local || !(pdf || img)) ? '#/note/' + encodeURIComponent(it.id) : esc2(it.path);
+  }
+  function cardOpen(it) {
+    var pdf = isPdf(it), img = isImage(it);
+    return (!it.local && (pdf || img)) ? ' target="_blank" rel="noopener"' : '';
+  }
+
+  function articleCard(a) {
+    return '<a class="read-card" href="#/read/' + a.id + '">' +
+      '<span class="tag">' + esc2(a.tag) + ' · ' + F.day(a.date) + '</span>' +
+      '<h3>' + esc2(a.title) + '</h3><p>' + esc2(a.summary) + '</p></a>';
+  }
+
+  function artSection(items) {
+    return '<section class="panel"><div class="panel-h"><h2>지난 글</h2><span class="note">사이트에 직접 쓴 글</span></div>' +
+      (items.length ? '<div class="read-grid">' + items.map(articleCard).join('') + '</div>'
+        : '<div class="empty">지난 글이 없습니다.</div>') +
+      '</section>';
+  }
+
+  function rowOf(title, href, open) {
+    var t = esc2(title || '제목 없음');
+    return '<li><a class="p-row" href="' + href + '"' + open + ' title="' + t + '">' + t + '</a></li>';
+  }
+
+  function listSection(title, rows) {
+    return '<section class="panel"><div class="panel-h"><h2>' + esc2(title) + '</h2></div>' +
+      '<ul class="post-list">' + rows.join('') + '</ul></section>';
+  }
+
+  function pagedCard(d, limit) {
+    var left = limit, out = '';
+    [
+      { h: '리포트', note: 'PDF · 클릭하면 새 탭에서 열립니다', items: d.reports, art: false,
+        empty: '아직 리포트가 없습니다 — content/reports/ 에 PDF를 올리거나 위에서 파일을 올리면 여기에 나타납니다.' },
+      { h: '칼럼', note: '짧은 글 · 사이트 안에서 읽습니다', items: d.notes, art: false,
+        empty: '아직 칼럼이 없습니다 — content/notes/ 에 .md 를 올리거나 위에서 직접 쓰면 여기에 나타납니다.' },
+      { h: '지난 글', note: '사이트에 직접 쓴 글', items: d.arts, art: true, empty: '지난 글이 없습니다.' }
+    ].forEach(function (s) {
+      if (!s.items.length) { if (left > 0) out += s.art ? artSection([]) : section(s.h, s.note, [], s.empty); return; }
+      if (left <= 0) return;
+      var take = s.items.slice(0, left);
+      left -= take.length;
+      out += s.art ? artSection(take) : section(s.h, s.note, take, s.empty);
+    });
+    return out;
+  }
+
+  function pagedList(d, limit) {
+    var left = limit, out = '';
+    var cats = ['리포트', '칼럼'].concat(customCats().map(function (c) { return c.name; }));
+    cats.forEach(function (c) {
+      var mine = d.items.filter(function (x) { return catOf(x) === c; });
+      if (!mine.length || left <= 0) return;
+      var take = mine.slice(0, left);
+      left -= take.length;
+      out += listSection(c, take.map(function (it) { return rowOf(it.title, cardHref(it), cardOpen(it)); }));
+    });
+    if (d.arts.length && left > 0) {
+      var take = d.arts.slice(0, left);
+      out += listSection('지난 글', take.map(function (a) { return rowOf(a.title, '#/read/' + a.id, ''); }));
+    }
+    return out;
+  }
+
+  function listArea(d, mode, limit) {
+    var total = d.items.length + d.arts.length;
+    var html = mode === 'list' ? pagedList(d, limit) : pagedCard(d, limit);
+    if (total > limit) {
+      html += '<div class="row more-row"><button class="btn ghost sm" type="button" id="pMore">더 보기</button>' +
+        '<span class="g-mini">' + limit + ' / ' + total + '개</span></div>';
+    }
+    return html;
+  }
+
+  function paintList(view) {
+    var d = curData || { items: [], reports: [], notes: [], arts: [] };
+    var tools = view.querySelector('.list-tools');
+    els('section.panel', view).forEach(function (s) { s.parentNode.removeChild(s); });
+    els('.more-row', view).forEach(function (s) { s.parentNode.removeChild(s); });
+    var tmp = document.createElement('div');
+    tmp.innerHTML = listArea(d, viewMode(), shown);
+    var anchor = tools ? tools.nextSibling : null;
+    while (tmp.firstChild) view.insertBefore(tmp.firstChild, anchor);
+    bindMore(view);
+  }
+
+  function bindMore(view) {
+    var more = el('#pMore', view);
+    if (!more) return;
+    more.addEventListener('click', function () {
+      shown += PAGE[viewMode()];
+      paintList(view);
+    });
+  }
+
+  function bindViewModes(view) {
+    els('[data-pview]', view).forEach(function (b) {
+      b.addEventListener('click', function () {
+        var m = b.getAttribute('data-pview') === 'list' ? 'list' : 'card';
+        if (m === viewMode()) return;
+        S.set(VKEY, m);
+        shown = PAGE[m];                      /* 형식을 바꾸면 처음 묶음부터 다시 */
+        els('[data-pview]', view).forEach(function (x) { x.classList.toggle('on', x === b); });
+        paintList(view);
+      });
+    });
+  }
+
   /* ------------------------------------------------------------ 화면 */
   function render(view, idx) {
     var items = allItems(idx).sort(function (a, b) {
@@ -193,6 +314,9 @@
     var reports = items.filter(function (x) { return isPdf(x) || catOf(x) === '리포트'; });
     var notes = items.filter(function (x) { return !(isPdf(x) || catOf(x) === '리포트'); });
     var arts = Data.readings.articles;
+    var mode = viewMode();
+    curData = { items: items, reports: reports, notes: notes, arts: arts };
+    shown = PAGE[mode];
 
     view.innerHTML =
       '<section class="hero"><div class="crumb"><a href="#/">홈</a> / 글</div>' +
@@ -207,7 +331,7 @@
       '</div>' +
 
       '<div class="panel post-panel" id="postPanel"' + (formOpen ? '' : ' hidden') + '>' +
-        '<div class="panel-h"><h2>글쓰기</h2></div>' +
+        '<div class="panel-h"><h2>글쓰기</h2><button class="btn ghost sm" type="button" id="pClose">목록으로</button></div>' +
         '<p class="note" style="margin-bottom:10px">' + (serverMode()
           ? '서버 저장이 연결되어 글과 파일이 사이트에 올라갑니다.'
           : '지금은 서버 저장이 붙기 전이라 글은 <b>이 브라우저(localStorage)</b>에만 남습니다. 다른 기기·다른 사람에게는 보이지 않고, 브라우저 기록을 지우면 함께 사라집니다. 서버 주소를 넣으면 같은 화면 그대로 사이트에 올라갑니다.') + '</p>' +
@@ -220,17 +344,17 @@
         '</div>' +
 
         '<div id="writePane">' +
-          '<div class="form-grid">' +
-            '<div class="field span3"><label for="pTitle">제목</label><input id="pTitle" placeholder="글 제목"></div>' +
-            '<div class="field span2"><label for="pKind">분류</label><select id="pKind">' + catOptions('칼럼') + '</select>' +
+          '<div class="form-grid post-form">' +
+            '<div class="field full"><label for="pTitle">제목</label><input id="pTitle" placeholder="글 제목"></div>' +
+            '<div class="field"><label for="pKind">분류</label><select id="pKind">' + catOptions('칼럼') + '</select>' +
               '<span class="cat-tools">' +
                 '<button type="button" class="linkbtn" id="pCatAddBtn">＋ 분류 추가</button>' +
                 '<button type="button" class="linkbtn" id="pCatRenBtn">이름 바꾸기</button>' +
                 '<button type="button" class="linkbtn" id="pCatDelBtn">지우기</button>' +
               '</span></div>' +
             '<div class="field"><label for="pDate">날짜</label><input type="date" id="pDate" value="' + F.today() + '"></div>' +
-            '<div class="field span6"><label for="pSummary">한 줄 요약 (선택)</label><input id="pSummary" placeholder="목록에 보일 한 줄"></div>' +
-            '<div class="field span6"><label for="pBody">본문 — 마크다운(#, -, **굵게**, [링크](주소))</label>' +
+            '<div class="field full"><label for="pSummary">한 줄 요약 (선택)</label><input id="pSummary" placeholder="목록에 보일 한 줄"></div>' +
+            '<div class="field full"><label for="pBody">본문 — 마크다운(#, -, **굵게**, [링크](주소))</label>' +
               '<textarea id="pBody" rows="10" placeholder="# 제목&#10;&#10;본문을 씁니다."></textarea></div>' +
           '</div>' +
           '<div class="cat-edit" id="pCatEdit" hidden>' +
@@ -246,10 +370,10 @@
         '</div>' +
 
         '<div id="uploadPane" hidden>' +
-          '<div class="form-grid">' +
-            '<div class="field span3"><label for="pFiles">파일 (PDF · md · 이미지, 여러 개 가능)</label>' +
+          '<div class="form-grid post-form">' +
+            '<div class="field full"><label for="pFiles">파일 (PDF · md · 이미지, 여러 개 가능)</label>' +
               '<input type="file" id="pFiles" multiple accept=".pdf,.md,.markdown,.png,.jpg,.jpeg,.webp"></div>' +
-            '<div class="field span2"><label for="pKind2">분류</label><select id="pKind2">' + catOptions('리포트') + '</select></div>' +
+            '<div class="field"><label for="pKind2">분류</label><select id="pKind2">' + catOptions('리포트') + '</select></div>' +
             '<div class="field"><label>&nbsp;</label><button class="btn" type="button" id="pUpload">올리기</button></div>' +
           '</div>' +
           '<div class="row" style="margin-top:4px"><span class="g-mini" id="uMsg" style="color:var(--amber)"></span></div>' +
@@ -258,26 +382,17 @@
         '</div>' +
       '</div>' +
 
-      section('리포트', 'PDF · 클릭하면 새 탭에서 열립니다', reports,
-        '아직 리포트가 없습니다 — content/reports/ 에 PDF를 올리거나 위에서 파일을 올리면 여기에 나타납니다.') +
-      section('칼럼', '짧은 글 · 사이트 안에서 읽습니다', notes,
-        '아직 칼럼이 없습니다 — content/notes/ 에 .md 를 올리거나 위에서 직접 쓰면 여기에 나타납니다.') +
-      section('지난 글', '사이트에 직접 쓴 글', arts.map(function (a) {
-        return { id: 'a:' + a.id, kind: 'article', title: a.title, date: a.date, summary: a.summary, local: false, path: '#/read/' + a.id };
-      }), '지난 글이 없습니다.');
-
-    /* 지난 글은 기존 기사 화면(#/read/{id})으로 */
-    var last = els('section.panel', view).slice(-1)[0];
-    if (last) {
-      var grid = last.querySelector('.read-grid');
-      if (grid) grid.innerHTML = arts.map(function (a) {
-        return '<a class="read-card" href="#/read/' + a.id + '">' +
-          '<span class="tag">' + esc2(a.tag) + ' · ' + F.day(a.date) + '</span>' +
-          '<h3>' + esc2(a.title) + '</h3><p>' + esc2(a.summary) + '</p></a>';
-      }).join('');
-    }
+      '<div class="row list-tools">' +
+        '<span class="g-seg" id="postView">' +
+          '<button type="button" data-pview="card"' + (mode === 'card' ? ' class="on"' : '') + '>카드</button>' +
+          '<button type="button" data-pview="list"' + (mode === 'list' ? ' class="on"' : '') + '>목록</button>' +
+        '</span>' +
+      '</div>' +
+      listArea(curData, mode, shown);
 
     bindEditor(view);
+    bindViewModes(view);
+    bindMore(view);
   }
 
   /* ------------------------------------------------------------ 분류 손대기 */
@@ -382,12 +497,27 @@
   function bindEditor(view) {
     /* 글쓰기 폼 접기/펼치기 */
     var toggle = el('#pToggle', view);
-    if (toggle) toggle.addEventListener('click', function () {
-      formOpen = !formOpen;
+    function setFormOpen(open) {
+      formOpen = open;
       var panel = el('#postPanel', view);
       if (panel) panel.hidden = !formOpen;
-      toggle.setAttribute('aria-expanded', formOpen ? 'true' : 'false');
-      toggle.textContent = formOpen ? '− 글쓰기 접기' : '＋ 글쓰기';
+      if (toggle) {
+        toggle.setAttribute('aria-expanded', formOpen ? 'true' : 'false');
+        toggle.textContent = formOpen ? '− 글쓰기 접기' : '＋ 글쓰기';
+      }
+    }
+    if (toggle) toggle.addEventListener('click', function () { setFormOpen(!formOpen); });
+
+    /* '목록으로' — 폼을 접고 글 목록으로 돌아간다. 쓰던 내용이 있으면 먼저 물어본다. */
+    var closeBtn = el('#pClose', view);
+    if (closeBtn) closeBtn.addEventListener('click', function () {
+      var typed = ((el('#pTitle', view) || {}).value || '').trim() ||
+                  ((el('#pBody', view) || {}).value || '').trim() ||
+                  ((el('#pSummary', view) || {}).value || '').trim();
+      if (typed && !window.confirm('쓰던 내용은 저장되지 않고 사라집니다. 목록으로 돌아갈까요?')) return;
+      setFormOpen(false);
+      var first = view.querySelector('section.panel');
+      if (first) first.scrollIntoView({ block: 'start', behavior: 'smooth' });
     });
 
     /* 분류 추가·이름 바꾸기·지우기 */
