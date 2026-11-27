@@ -535,18 +535,21 @@ def scores_for(symbol, series, now_et, key, vix_series, live_px, live_session):
     # 원본 규칙: VIX 는 장외에 거의 안 움직인다 — 장중이라도 확정 봉까지만 쓴다.
 
     def values_for(seq, vstats, target):
+        """지표 값 — **반올림하지 않은 원값**으로 점수를 낸다.
+
+        원본 앱이 남긴 점수 이력(data/scores.json, 277거래일)과 대조해 보니 원값으로 계산할 때
+        265일이 소수점까지 같았고, 중간값을 반올림하면 111~134일이 0.1 어긋났다.
+        화면에 적는 raw 표기만 소수 2자리로 다듬는다.
+        """
         st = stats(seq)
         return {
-            "dd": abs(js_round(st["dd"], 2)),
-            "wrsi": fine(wilder_rsi(weekly_closes(seq))),
-            "vixr": fine(vstats["ratio"]) if vstats else None,
-            "gap": js_round(st["gap"], 2),
-            "drsi": fine(wilder_rsi([c for _, c in seq])),
-            "vixp": js_round(vstats["pctile"], 2) if vstats else None,
+            "dd": abs(st["dd"]),
+            "wrsi": wilder_rsi(weekly_closes(seq)),
+            "vixr": vstats["ratio"] if vstats else None,
+            "gap": st["gap"],
+            "drsi": wilder_rsi([c for _, c in seq]),
+            "vixp": vstats["pctile"] if vstats else None,
         }, st
-
-    def fine(v):
-        return js_round(v, 2) if v is not None else None
 
     values, cst = values_for(conf, vc, key)
     score, rows = singular_score(values, key)
@@ -556,7 +559,7 @@ def scores_for(symbol, series, now_et, key, vix_series, live_px, live_session):
         "dd": js_round(cst["dd"], 2), "close": js_round(cst["close"], 2),
         "peak": js_round(cst["peak"], 2), "ma200": js_round(cst["ma200"], 2),
         "values": values,
-        "vix": {"last": fine(vc["last"]), "ma50": fine(vc["ma50"]), "ratio": fine(vc["ratio"]),
+        "vix": {"last": js_round(vc["last"], 2), "ma50": js_round(vc["ma50"], 2), "ratio": js_round(vc["ratio"], 3),
                 "pctile": js_round(vc["pctile"], 2), "samples": vc["samples"]} if vc else None,
     }
 

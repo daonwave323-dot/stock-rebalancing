@@ -108,7 +108,8 @@ def score_tests(barsdir, snap):
     check("낙폭 TQQQ 일치", c1["dd"] == want["ndx"]["dd"], (c1["dd"], want["ndx"]["dd"]))
     check("낙폭 SOXL 일치", c2["dd"] == want["sox"]["dd"], (c2["dd"], want["sox"]["dd"]))
     check("200일선 TQQQ 일치", c1["ma200"] == want["ndx"]["detail"]["ma200"], (c1["ma200"], want["ndx"]["detail"]["ma200"]))
-    check("VIX 비율 일치", c1["vix"]["ratio"] == want["ndx"]["rows"][2]["raw"], (c1["vix"]["ratio"], want["ndx"]["rows"][2]["raw"]))
+    check("VIX 비율 일치", c1["rows"][2]["raw"] == want["ndx"]["rows"][2]["raw"],
+          (c1["rows"][2]["raw"], want["ndx"]["rows"][2]["raw"]))
 
     # 실시간(추정) — 프리마켓 값을 얹으면 점수가 다시 계산된다
     live_pre = 48.16
