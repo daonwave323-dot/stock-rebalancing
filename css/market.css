@@ -154,3 +154,7 @@ html[data-mkt-font="large"] .mkt-wrap{zoom:1.1}
 html[data-mkt-contrast="high"] .mkt-wrap{--tx:#ffffff;--tx2:#dfe6ef;--dim:#c3ccda;--line:#5a6579}
 html[data-mkt-contrast="high"] .mkt-wrap .src{color:#c3ccda}
 .idx-cell .n .src{flex:0 0 100%;margin-top:1px}
+
+/* 모든 화면 위의 '5분 자동 갱신' 띠 — 티커 가격 숫자만 연두색(원본 Theme.good dark #3DD68C).
+   등락률·화살표 색은 그 띠의 규칙(상승 초록/하락 빨강)을 그대로 둔다. */
+.lv-chip > span{color:var(--price);font-weight:700}
