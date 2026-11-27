@@ -764,7 +764,9 @@
       : (snap.basis === 'live'
         ? '실시간' + (etPart(meta) ? ' ' + etPart(meta) : ' 값 없음')
         : '확정 ' + F.day(snap.L.as_of) + ' 종가');
-    return '지금 ' + trim1(snap.result.score) + '점 · ' + (snap.manual ? '수동' : '자동') + ' · ' + basisTxt;
+    /* 자동이라도 슬라이더를 만졌으면 값은 내가 조정한 것 — 머리 줄에서 그걸 숨기지 않는다 */
+    var modeTxt = snap.manual ? '수동' : (ST.edited ? '자동·값 조정' : '자동');
+    return '지금 ' + trim1(snap.result.score) + '점 · ' + modeTxt + ' · ' + basisTxt;
   }
 
   function gaugeTopHtml(snap, T, G) {

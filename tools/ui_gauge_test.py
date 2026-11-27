@@ -233,6 +233,7 @@ def main():
         back = gauge_state(pg)
         check('자동 복귀: 확정 값으로 돌아온다', back['dd'] == combos['auto-close']['dd'], (back['dd'], combos['auto-close']['dd']))
         check('자동 복귀: 점수도 확정', back['score'] == combos['auto-close']['score'], (back['score'], combos['auto-close']['score']))
+        check('자동 복귀: 머리 줄도 자동으로 돌아온다', '값 조정' not in back['inputHead'], back['inputHead'])
 
         print('  네 조합 — dd/score/price/tag')
         for k, v in combos.items():
@@ -260,6 +261,7 @@ def main():
         check('낙폭 48.0 → 가격 역산', after['price'] == ('$%.2f' % want_px),
               (after['price'], '$%.2f (peak %.2f×(1-48.0%%))' % (want_px, peak)))
         check('낙폭 48.0 → 점수 바뀜', after['score'] != before['score'], (before['score'], after['score']))
+        check('손으로 만지면 머리 줄이 값을 조정한 것으로 적는다', '값 조정' in after['inputHead'], after['inputHead'])
         # 낙폭은 48%에서 이미 환산 100(포화) — 레이더가 안 움직이는 게 맞다. 레이더는 주간 RSI로 확인한다.
         check('낙폭(포화 지표)에서는 레이더 꼭짓점이 그대로', after['radar'] == before['radar'],
               (before['radar'][:40], after['radar'][:40]))
