@@ -127,8 +127,9 @@
 
     function card(key, cls) {
       var s = t[key];
+      var SHORT = { dd: '고점 대비 낙폭', wrsi: '주간 RSI', vixr: 'VIX/50일', gap: '200일선 이격', drsi: '일간 RSI', vixp: '공포 백분위' };
       var bars = s.rows.map(function (r) {
-        return '<li><span>' + esc(r.name) + '</span>' +
+        return '<li><span>' + esc(SHORT[r.key] || r.name) + '</span>' +
           '<span class="track"><i class="' + (r.converted >= 90 ? 'hi' : '') + '" style="width:' + Math.max(0, Math.min(100, r.converted)) + '%"></i></span>' +
           '<b>' + F.num(r.converted) + '</b></li>';
       }).join('');
