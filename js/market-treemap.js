@@ -148,7 +148,9 @@
       if (tw <= r.w - 8) {
         ctx.fillStyle = '#eef2f8';
         var cx = r.x + r.w / 2, cy = r.y + r.h / 2;
-        var showSub = r.h >= 34;
+        ctx.font = '9.5px -apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif';
+        var showSub = r.h >= 34 && ctx.measureText(sub).width <= r.w - 8;
+        ctx.font = '700 ' + fs + 'px -apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif';
         if (!showSub) ctx.fillText(name, cx, cy);
         else {
           ctx.fillText(name, cx, cy - 7);
