@@ -370,6 +370,8 @@
       }));
       /* 관심 목록은 증시 탭과 한 벌(watch.us·watch.kr)이다 — 여기서 담아도 같이 남는다. */
       if (w.Mkt && Mkt.addWatch) Mkt.addWatch(Mkt.marketOf(sym), sym, sym);
+      /* 관심 목록은 증시 탭과 한 벌(watch.us·watch.kr)이다 — 여기서 담아도 같이 남는다. */
+      if (w.Mkt && Mkt.addWatch) Mkt.addWatch(Mkt.marketOf(sym), sym, sym);
       inp.value = '';
       render();
     });

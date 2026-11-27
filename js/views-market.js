@@ -32,6 +32,83 @@
     return '<span class="' + cls + '">' + arrow + Mkt.pct(v) + '</span>';
   }
 
+  /* ------------------------------------------------------------ 관심 하트
+     원본 앱은 종목 상세 오른쪽 위의 별표 하나로 관심목록을 담고 뺐다(채워진 별 = 담김, 빈 별 = 안 담김,
+     담긴 별은 악센트색, 나머지는 보조 글자색). 웹은 무아 님이 찾은 '하트' 모양으로 그 자리를 옮기고,
+     목록 줄 오른쪽 끝에도 같은 버튼을 둔다. 모양만 SVG 로 새로 그린다(앱 자산을 쓰지 않는다).
+     색은 기존 변수만 쓴다 — 담김은 --amber(금색). 등락 빨강·파랑·가격 연두와 겹치지 않는 색이다. */
+  var HEART_PATH = 'M12 20.7 10.7 19.5C5.6 14.9 2.2 11.8 2.2 8.1 2.2 5.1 4.6 2.7 7.5 2.7c1.7 0 3.3.8 4.5 2.1 1.2-1.3 2.8-2.1 4.5-2.1 2.9 0 5.3 2.4 5.3 5.4 0 3.7-3.4 6.8-8.5 11.4z';
+
+  function heartBtn(sym, name, withLabel) {
+    var market = Mkt.marketOf(sym) || st.market;
+    var on = Mkt.inWatch(market, sym);
+    var lbl = on ? '관심 종목에서 빼기' : '관심 종목에 담기';
+    return '<button class="heart' + (on ? ' on' : '') + (withLabel ? ' heartbtn' : '') + '" type="button"' +
+      ' data-heart="' + esc(sym) + '" data-hn="' + esc(name || sym) + '"' +
+      ' aria-pressed="' + (on ? 'true' : 'false') + '" aria-label="' + lbl + '" title="' + lbl + '">' +
+      '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">' +
+      '<path class="ho" d="' + HEART_PATH + '" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>' +
+      '<path class="hf" d="' + HEART_PATH + '" fill="currentColor"/>' +
+      '</svg>' + (withLabel ? '<span class="hlbl">' + (on ? '관심 빼기' : '관심 담기') + '</span>' : '') +
+      '</button>';
+  }
+
+  function paintHearts(view, sym) {
+    var market = Mkt.marketOf(sym) || st.market;
+    var on = Mkt.inWatch(market, sym);
+    var lbl = on ? '관심 종목에서 빼기' : '관심 종목에 담기';
+    view.querySelectorAll('[data-heart]').forEach(function (b) {
+      if (String(b.getAttribute('data-heart')).toUpperCase() !== String(sym).toUpperCase()) return;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+      b.setAttribute('aria-label', lbl);
+      b.setAttribute('title', lbl);
+      var t = b.querySelector('.hlbl');
+      if (t) t.textContent = on ? '관심 빼기' : '관심 담기';
+    });
+  }
+
+  function toggleHeart(btn, view) {
+    var sym = btn.getAttribute('data-heart');
+    var name = btn.getAttribute('data-hn') || sym;
+    var market = Mkt.marketOf(sym) || st.market;
+    var on = Mkt.inWatch(market, sym);
+    if (on) {
+      Mkt.removeWatch(market, sym);
+      toast(name + ' 관심 목록에서 뺐습니다');
+    } else if (Mkt.addWatch(market, sym, name)) {
+      toast(name + ' 관심 목록에 담았습니다');
+    } else {
+      toast('이미 관심 목록에 있습니다');
+    }
+    paintHearts(view, sym);
+    // 증시 홈은 관심 종목 표·개수가 같은 목록을 보여 준다 — 새로고침 없이 그 표만 다시 그린다.
+    if (!location.hash.replace(/^#/, '').split('/').filter(Boolean)[1]) {
+      var y = w.pageYOffset || 0;
+      var hadFocus = document.activeElement === btn;
+      home(view);
+      w.scrollTo(0, y);
+      if (hadFocus) {
+        // 다시 그린 뒤에도 키보드 초점이 그 하트에 남게 한다.
+        var again = null;
+        view.querySelectorAll('[data-heart]').forEach(function (b) {
+          if (!again && String(b.getAttribute('data-heart')).toUpperCase() === String(sym).toUpperCase()) again = b;
+        });
+        if (again) again.focus({ preventScroll: true });
+      }
+    }
+  }
+
+  function bindHearts(view) {
+    view.querySelectorAll('[data-heart]').forEach(function (b) {
+      b.addEventListener('click', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        toggleHeart(b, view);
+      });
+    });
+  }
+
   function stopTimer() {
     if (st.timer) { clearInterval(st.timer); st.timer = null; }
   }
@@ -119,7 +196,8 @@
         return { it: it, q: q, lk: lk };
       });
       h += '<div class="tbl-wrap" style="margin-top:8px"><table class="mkt"><thead><tr>' +
-        '<th class="nm">종목</th><th>가격</th><th>등락</th><th>시가총액</th><th>거래량</th><th></th></tr></thead><tbody>';
+        '<th class="nm">종목</th><th>가격</th><th>등락</th><th>시가총액</th><th>거래량</th>' +
+        '<th class="hcell" scope="col"><span class="sr">관심</span></th></tr></thead><tbody>';
       wrows.forEach(function (r, i) {
         var sym = r.it.sym, cur = r.q ? r.q.cur : (market === 'kr' ? 'KRW' : 'USD');
         var price = r.lk ? r.lk.price : null;
@@ -130,10 +208,10 @@
           '<td>' + chg(c, market) + '</td>' +
           '<td>' + (r.q ? Mkt.cap(r.q.mcap, cur, Mkt.fx()) : '—') + '</td>' +
           '<td class="vol">' + (r.lk ? Mkt.vol(r.lk.vol) : '—') + '</td>' +
-          '<td style="white-space:nowrap">' +
-            '<button class="x" type="button" data-up="' + esc(sym) + '" title="위로">▲</button>' +
-            '<button class="x" type="button" data-down="' + esc(sym) + '" title="아래로">▼</button>' +
-            '<button class="x" type="button" data-del="' + esc(sym) + '" title="빼기">✕</button>' +
+          '<td class="hcell act" style="white-space:nowrap">' +
+            '<button class="x" type="button" data-up="' + esc(sym) + '" title="위로" aria-label="' + esc(sym) + ' 위로">▲</button>' +
+            '<button class="x" type="button" data-down="' + esc(sym) + '" title="아래로" aria-label="' + esc(sym) + ' 아래로">▼</button>' +
+            heartBtn(sym, (r.q && r.q.name) || r.it.name || sym) +
           '</td></tr>';
         if (r.lk && r.lk.note && r.lk.session !== 'regular') {
           h += '<tr><td colspan="6" class="note" style="border:none;padding:0 6px 6px">' +
@@ -202,6 +280,7 @@
     bindTop(view, true);
     bindWatch(view);
     bindHomeRows(view);
+    bindHearts(view);
     if (st.mapScope !== 'SECTOR') {
       var box = view.querySelector('#mapbox');
       if (box) {
@@ -269,14 +348,16 @@
 
   function table(rows, market) {
     var h = '<div class="tbl-wrap"><table class="mkt"><thead><tr>' +
-      '<th class="nm">종목</th><th>가격</th><th>등락</th><th>거래대금</th><th>시가총액</th></tr></thead><tbody>';
+      '<th class="nm">종목</th><th>가격</th><th>등락</th><th>거래대금</th><th>시가총액</th>' +
+      '<th class="hcell" scope="col"><span class="sr">관심</span></th></tr></thead><tbody>';
     rows.forEach(function (r) {
       h += '<tr class="row" data-stock="' + esc(r.sym) + '">' +
         '<td class="nm"><span class="sym">' + esc(r.sym) + '</span><span class="desc">' + esc(r.name || r.desc || '') + '</span></td>' +
         '<td>' + px(r.price, r.cur) + '</td>' +
         '<td>' + chg(r.chg, market) + '</td>' +
         '<td class="vol">' + Mkt.money(r.val, r.cur) + '</td>' +
-        '<td>' + Mkt.cap(r.mcap, r.cur, Mkt.fx()) + '</td></tr>';
+        '<td>' + Mkt.cap(r.mcap, r.cur, Mkt.fx()) + '</td>' +
+        '<td class="hcell">' + heartBtn(r.sym, r.name || r.desc || r.sym) + '</td></tr>';
     });
     h += '</tbody></table></div>';
     return h;
@@ -480,6 +561,7 @@
     view.innerHTML = h;
     bindTop(view, false);
     bindHomeRows(view);
+    bindHearts(view);
     view.querySelectorAll('[data-list-sort]').forEach(function (b) {
       b.addEventListener('click', function () {
         st.sort = b.getAttribute('data-list-sort');
@@ -523,10 +605,8 @@
       '<h2 style="margin:2px 0 0">' + esc(q.name || sym) + ' <span class="src">' + esc(sym) + '</span></h2>' +
       '<div class="big" style="margin-top:6px">' + px(lk ? lk.price : null, cur) + ' <span style="font-size:15px">' + chg(lk ? lk.chg : null, market) + '</span></div>' +
       '<div class="note" style="margin-top:2px">' + esc(lk ? (lk.note || '') : '') + (lk && lk.at ? ' · ' + Mkt.time(lk.at) : '') + '</div>' +
-      '</div><div style="margin-left:auto;display:flex;gap:6px;flex-wrap:wrap">' +
-      (Mkt.inWatch(market, sym)
-        ? '<button class="btn sm" data-unwatch="' + esc(sym) + '" type="button">관심에서 빼기</button>'
-        : '<button class="btn sm primary" data-watch="' + esc(sym) + '" type="button">관심에 담기</button>') +
+      '</div><div style="margin-left:auto;display:flex;gap:6px;flex-wrap:wrap;align-items:center">' +
+      heartBtn(sym, q.name, true) +
       '<a class="btn sm ghost" href="#/rebalance">리밸런싱</a></div></div>';
 
     if (raw.high52 && raw.low52 && lk && lk.price != null && raw.high52 > raw.low52) {
@@ -584,6 +664,7 @@
     view.innerHTML = h;
     bindTop(view, false);
     bindDetail(view, sym, q);
+    bindHearts(view);
 
     var maOff = maOffObj();
     Candles.loadFor(sym).then(function (bars) {
@@ -615,16 +696,6 @@
   }
 
   function bindDetail(view, sym, q) {
-    var wb = view.querySelector('[data-watch]');
-    if (wb) wb.addEventListener('click', function () {
-      Mkt.addWatch(st.market, sym, q.name);
-      detailView(view, sym);
-    });
-    var ub = view.querySelector('[data-unwatch]');
-    if (ub) ub.addEventListener('click', function () {
-      Mkt.removeWatch(st.market, sym);
-      detailView(view, sym);
-    });
     view.querySelectorAll('[data-cspan]').forEach(function (b) {
       b.addEventListener('click', function () {
         view.querySelectorAll('[data-cspan]').forEach(function (x) { x.classList.remove('on'); });

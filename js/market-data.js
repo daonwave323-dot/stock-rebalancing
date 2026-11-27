@@ -14,6 +14,9 @@
   };
 
   var KEY_US = 'watch.us', KEY_KR = 'watch.kr';
+  /* 예전 홈 화면이 쓰던 한 벌짜리 목록. 지금은 watch.us·watch.kr 에서 만든 사본만 둔다
+     (홈의 내 종목 시세 표·5분 띠가 이 키를 읽는다 — 목록이 두 벌로 갈라지지 않게). */
+  var KEY_MIRROR = 'watch';
   var DEFAULT_WATCH = {
     us: [{ sym: 'TQQQ', name: '나스닥 3배' }, { sym: 'SOXL', name: '반도체 3배' }],
     kr: []
@@ -193,16 +196,71 @@
   };
 
   /* ------------------------------------------------------------ 관심 종목 */
+  /* 관심 목록은 watch.us · watch.kr 두 키가 기준이다. 홈의 표·5분 띠는 한 벌짜리
+     `watch` 를 읽으므로, 두 키가 바뀔 때마다 같은 내용을 `watch` 에 다시 적는다.
+     예전에 홈에서 담아 둔 `watch` 는 처음 한 번 두 키로 옮긴다. */
+  var synced = false;
+  function keyOf(market) { return market === 'kr' ? KEY_KR : KEY_US; }
+  function rawWatch(market) {
+    var v = w.S ? S.get(keyOf(market), null) : null;
+    return Array.isArray(v) ? v : null;
+  }
+  function marketFor(sym) {
+    return /^\d{6}$/.test(baseSym(sym)) ? 'kr' : 'us';
+  }
+  function mirror() {
+    if (!w.S) return;
+    var out = [], seen = {};
+    rawWatch('us').concat(rawWatch('kr')).forEach(function (x) {
+      var s = String((x && x.sym) || '').toUpperCase();
+      if (!s || seen[s]) return;
+      seen[s] = 1; out.push(s);
+    });
+    S.set(KEY_MIRROR, out);
+  }
+  function sync() {
+    if (synced) return;
+    synced = true;
+    if (!w.S) return;
+    var us = rawWatch('us'), kr = rawWatch('kr');
+    if (!us && !kr) {
+      var old = S.get(KEY_MIRROR, null);
+      if (Array.isArray(old)) {
+        // 예전 홈 목록을 시장별로 나눠 옮긴다(빈 배열이면 비운 그대로 둔다).
+        us = []; kr = [];
+        old.forEach(function (s) {
+          var sym = String(s || '').trim().toUpperCase();
+          if (!sym) return;
+          (marketFor(sym) === 'kr' ? kr : us).push({ sym: sym, name: sym });
+        });
+      } else {
+        us = DEFAULT_WATCH.us.slice(); kr = DEFAULT_WATCH.kr.slice();
+      }
+      S.set(KEY_US, us); S.set(KEY_KR, kr);
+    }
+    mirror();
+  }
+  M.syncWatch = sync;
   function readWatch(market) {
-    var key = market === 'kr' ? KEY_KR : KEY_US;
-    var v = w.S ? S.get(key, null) : null;
-    if (!v) return DEFAULT_WATCH[market].slice();
-    return Array.isArray(v) ? v : [];
+    sync();
+    var v = rawWatch(market === 'kr' ? 'kr' : 'us');
+    return v || [];
   }
   M.watch = function (market) { return readWatch(market); };
+  /* 홈 표·5분 띠가 함께 보는 한 벌 목록(심볼만). */
+  M.watchAll = function () {
+    var out = [];
+    readWatch('us').concat(readWatch('kr')).forEach(function (x) {
+      var s = String((x && x.sym) || '').toUpperCase();
+      if (s && out.indexOf(s) < 0) out.push(s);
+    });
+    return out;
+  };
   M.setWatch = function (market, list) {
-    var key = market === 'kr' ? KEY_KR : KEY_US;
+    sync();
+    var key = keyOf(market);
     S.set(key, list.map(function (x) { return { sym: x.sym, name: x.name || x.sym }; }));
+    mirror();
   };
   M.inWatch = function (market, sym) {
     return readWatch(market).some(function (x) { return String(x.sym).toUpperCase() === String(sym).toUpperCase(); });

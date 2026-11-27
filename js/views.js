@@ -362,16 +362,17 @@
       var inp = el('#watchSym', view);
       var sym = (inp.value || '').trim().toUpperCase();
       if (!sym || !/^[A-Z0-9.\-]{1,8}$/.test(sym)) { toast('티커를 영문·숫자로 적어 주세요.'); return; }
-      var list = S.get('watch', []);
-      if (list.indexOf(sym) < 0) list.push(sym);
-      S.set('watch', list);
+      /* 증시 탭과 같은 목록(watch.us·watch.kr)에 담는다 — 두 벌로 나뉘지 않게. */
+      var added = w.Mkt ? Mkt.addWatch(Mkt.marketOf(sym), sym, sym) : false;
+      if (!added) { var list = S.get('watch', []); if (list.indexOf(sym) < 0) { list.push(sym); S.set('watch', list); } }
       inp.value = '';
       V.home(liveView());
     });
     els('[data-unwatch]', view).forEach(function (b) {
       b.addEventListener('click', function () {
         var sym = b.getAttribute('data-unwatch');
-        S.set('watch', S.get('watch', []).filter(function (x) { return x !== sym; }));
+        if (w.Mkt) Mkt.removeWatch(Mkt.marketOf(sym), sym);
+        else S.set('watch', S.get('watch', []).filter(function (x) { return x !== sym; }));
         V.home(liveView());
       });
     });
@@ -426,8 +427,8 @@
     var syms = [];
     function add(s) { s = String(s || '').trim().toUpperCase(); if (s && s !== 'CASH' && syms.indexOf(s) < 0) syms.push(s); }
     holdings().forEach(function (r) { add(r.sym); });
-    S.get('watch', []).forEach(add);
-    var watch = S.get('watch', []);
+    var watch = w.Mkt ? Mkt.watchAll() : S.get('watch', []);
+    watch.forEach(add);
 
     if (!syms.length) {
       return '<section class="panel tight" style="margin-bottom:12px">' +
