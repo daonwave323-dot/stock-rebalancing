@@ -637,7 +637,7 @@
   function nameSpans(name, sym, rank) {
     return '<span class="nline">' +
       (rank ? '<span class="rk2" aria-label="' + rank + '등">' + rank + '</span>' : '') +
-      '<span class="nm2">' + esc(name) + '</span>' +
+      '<span class="nm2" title="' + esc(name) + ' ' + esc(sym) + '">' + esc(name) + '</span>' +
       '<span class="cd2">' + esc(sym) + '</span></span>';
   }
 
