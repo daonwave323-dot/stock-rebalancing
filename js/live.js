@@ -46,18 +46,24 @@
     return String(s).replace(/^\d{4}-/, '');
   }
 
+  /* live.json 가져오기.
+     깃허브 페이지(Pages)는 커밋 뒤 빌드가 한 번 더 돌아 몇 분 늦다. 그래서 원본 저장소의
+     파일(raw.githubusercontent, CORS 열려 있음)을 먼저 보고, 그것이 안 되면 같은 사이트의
+     data/live.json 을 쓴다. 둘 다 없으면 조용히 실패하고 사이트는 스냅샷으로 돈다. */
   function fetchLive() {
-    return fetch(REL + '?t=' + Date.now(), { cache: 'no-store' }).then(function (r) {
-      if (!r.ok) throw new Error('live.json ' + r.status);
-      return r.json();
-    }).catch(function (e) {
-      /* 깃허브 페이지에 올라온 사이트라면, 배포(빌드)가 아직 안 끝났을 때만 원본 저장소를 본다.
-         로컬·다른 곳에서 열었을 때는 조용히 실패한다 — 콘솔에 404 를 남기지 않는다. */
-      if (!/(^|\.)github\.io$/.test(location.hostname)) throw e;
-      return fetch(RAW + '?t=' + Date.now(), { cache: 'no-store' }).then(function (r) {
+    var t = '?t=' + Date.now();
+    var isLocal = /^(localhost|127\.0\.0\.1|\[::1\]|0\.0\.0\.0)$/.test(location.hostname);
+    var head = isLocal
+      ? Promise.reject(new Error('로컬 확인 — 저장소 원본은 보지 않는다'))
+      : fetch(RAW + t, { cache: 'no-store' }).then(function (r) {
         if (!r.ok) throw new Error('raw live.json ' + r.status);
         return r.json();
       });
+    return head.catch(function (e) {
+      return fetch(REL + t, { cache: 'no-store' }).then(function (r) {
+        if (!r.ok) throw new Error('live.json ' + r.status);
+        return r.json();
+      }).catch(function () { throw e; });
     });
   }
 

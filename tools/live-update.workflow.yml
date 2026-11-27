@@ -27,6 +27,8 @@ jobs:
     steps:
       - name: 저장소 받기
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # rebase 푸시가 되도록 전체 이력을 받는다
 
       - name: 파이썬 준비
         uses: actions/setup-python@v5
