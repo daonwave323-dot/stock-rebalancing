@@ -911,6 +911,8 @@ def main(argv=None):
     ap.add_argument("--only", default=None, help="점검용: 이 심볼들만(쉼표)")
     ap.add_argument("--candles", action="store_true",
                     help="data/candles.json 의 일봉을 야후 5년으로 다시 받고 끝낸다(지수·종목 공통)")
+    ap.add_argument("--write-candles", action="store_true",
+                    help="이번 실행에서 받은 ^NDX·^VIX 봉을 data/candles.json 에도 덮어쓴다(기본은 live.json 만)")
     ap.add_argument("--candles-out", default=os.path.join(root, "data", "candles.json"))
     args = ap.parse_args(argv)
 
@@ -1190,15 +1192,17 @@ def main(argv=None):
         f.write(text)
     os.replace(tmp, args.out)
 
-    # 지수 봉(^NDX·^VIX)은 data/candles.json 에도 덮어쓴다(큰 차트 5년용).
+    # 지수 봉(^NDX·^VIX)을 data/candles.json 에도 덮어쓰려면 --write-candles 를 준다.
     # 5분 워크플로는 data/live.json 만 커밋하므로, 화면의 6개월 미니차트는
     # live.json 의 dayBars 를 더 새 값으로 합쳐 쓴다(값이 없으면 지어내지 않는다).
-    try:
-        n = merge_candles(os.path.join(root, "data", "candles.json"), index_candles)
-        if n:
-            print("candles.json 지수 봉 갱신(^NDX·^VIX)")
-    except Exception as e:  # noqa: BLE001
-        errors.append("candles: " + str(e)[:120])
+    # (기본으로 쓰면 5분마다 큰 파일이 작업 트리에 남아 워크플로의 rebase-autostash 와 부딪힌다.)
+    if args.write_candles:
+        try:
+            n = merge_candles(os.path.join(root, "data", "candles.json"), index_candles)
+            if n:
+                print("candles.json 지수 봉 갱신(^NDX·^VIX)")
+        except Exception as e:  # noqa: BLE001
+            errors.append("candles: " + str(e)[:120])
 
     tq = symbols_out.get("TQQQ", {})
     print("live.json: %d심볼 (국장 %d) · %s · TQQQ %s(%s) 점수 %s / 실시간 %s · partial %d · calls %d"
