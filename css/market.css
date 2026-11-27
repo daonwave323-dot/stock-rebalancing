@@ -153,3 +153,4 @@ button.chip{font-family:inherit}
 html[data-mkt-font="large"] .mkt-wrap{zoom:1.1}
 html[data-mkt-contrast="high"] .mkt-wrap{--tx:#ffffff;--tx2:#dfe6ef;--dim:#c3ccda;--line:#5a6579}
 html[data-mkt-contrast="high"] .mkt-wrap .src{color:#c3ccda}
+.idx-cell .n .src{flex:0 0 100%;margin-top:1px}

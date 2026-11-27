@@ -499,7 +499,7 @@
       return { sym: x.sym, name: x.name, proxy: x.proxy, price: price, chg: chg, at: at, note: note };
     });
     if (market === 'us') {
-      [['^NDX', '나스닥 종합지수'], ['^VIX', 'VIX 변동성']].forEach(function (p) {
+      [['^NDX', '나스닥100 지수'], ['^VIX', 'VIX 변동성']].forEach(function (p) {
         var l = M.liveSym(p[0]);
         if (!l) return;
         out.push({ sym: p[0], name: p[1], proxy: '5분 갱신', price: l.last, chg: l.changePct,
