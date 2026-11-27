@@ -160,7 +160,7 @@
       chg: (e.session === 'regular' && e.sessionChangePct !== null && e.sessionChangePct !== undefined)
         ? e.sessionChangePct : e.changePct,
       at: e.sessionKst || e.lastTimeKst || e.regularCloseKst || null,
-      src: e.session === 'regular' ? '국장 정규장' : (e.sessionLabel || '마지막 종가'),
+      src: e.session === 'regular' ? '국장 정규장' : '마지막 국장 종가',
       live: true
     };
   }
