@@ -8,6 +8,24 @@
       "title": "밸류게이지, 여섯 지표를 한 장으로 읽는 법",
       "date": "2026-11-27",
       "summary": "점수 하나보다 여섯 축의 모양이 먼저다 — 이 사이트의 매수 지표 화면을 읽는 순서."
+    },
+    {
+      "id": "report-ai-datacenter-2030",
+      "kind": "reports",
+      "cat": "내 포트",
+      "path": "content/reports/AI-데이터센터-2030-2026-11-26.pdf",
+      "title": "AI 데이터센터 2030 — 전력·광통신·반도체, 무엇이 병목이 되는가",
+      "date": "2026-11-26",
+      "summary": "A4 34쪽 · 표 35개 · 도식 12개 — 칩은 2~3년, 계통 접속은 5~15년. 병목이 어디로 옮겨 가는지 순서로 정리."
+    },
+    {
+      "id": "note-ai-datacenter-summary",
+      "kind": "notes",
+      "cat": "칼럼",
+      "path": "content/notes/2026-11-28-ai-datacenter-2030-summary.md",
+      "title": "AI 데이터센터 사슬 — 한 장 정리",
+      "date": "2026-11-28",
+      "summary": "계통 접속 2,060GW 대기 · 268GW 부족 · 1m 안은 구리 — 34쪽 보고서를 한 장으로."
     }
   ]
 }

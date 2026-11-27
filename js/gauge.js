@@ -984,50 +984,72 @@
   }
 
   /* 현재 경로 — ^NDX 일봉에서 고점 이후 하루씩. 값이 실제로 움직였을 때만 한 점을 더 붙인다. */
+  /*
+   * 현재 경로 — 사례(crashes.json)와 '똑같은 규격'으로 만든다(무아 님 2026-11-28 지시).
+   *   prePath : 고점 앞 252거래일(^NDX 종가로 고점 대비 낙폭 재계산)
+   *   path    : 고점(10/06) → 지금
+   *   trough  : 저점 기준 ±252거래일 — 저점은 고점 이후 최저점(지금 2026-11-20), 값은 저점 종가 = 100 기준 %.
+   * 좌표 규칙도 사례와 같다: 고점 계열 x=0 이 고점, 저점 계열 x=0 이 저점.
+   * 그래서 6개월~3년 창에서 사례들과 같은 밀도로 퍼지고, 현재 선은 지금 점에서 끝난다.
+   */
   function ovToday() {
     var now = Data.now();
     var idx = Data.scores.index || [];
-    var rows = [], dates = [];
-    var seen = false;
-    (idx || []).forEach(function (r) {
-      if (!seen && r[0] >= now.peak_date) seen = true;
-      if (seen) { rows.push({ x: rows.length, dd: r[2] }); dates.push(r[0]); }
-    });
-    if (!rows.length) return null;
+    if (!idx.length || !(now.peak_close > 0)) return null;
+
+    var pi = -1;
+    for (var i = 0; i < idx.length; i++) if (idx[i][0] <= now.peak_date) pi = i;
+    if (pi < 0) return null;
+
+    var prePath = [], path = [], dates = [];
+    for (var a = Math.max(0, pi - 252); a < pi; a++) {
+      prePath.push([a - pi, (idx[a][1] / now.peak_close - 1) * 100]);
+    }
+    for (var b = pi; b < idx.length; b++) {
+      path.push([b - pi, (idx[b][1] / now.peak_close - 1) * 100]);
+      dates.push(idx[b][0]);
+    }
+    if (!path.length) return null;
     var lastConfirmed = dates[dates.length - 1];
 
     var np = ovNowPoint();
     var ddNow = np.dd, src = np.src, label = np.label;
-    var lastDd = rows[rows.length - 1].dd;
-    var confOffset = rows[rows.length - 1].x;
-    var ratio = (lastDd > -100) ? (1 + ddNow / 100) / (1 + lastDd / 100) : 1;
+    var lastDd = path[path.length - 1][1];
 
     /* 선을 지금까지 잇는다 — 값이 실제로 움직였을 때만 한 점을 더 붙인다.
-       확정 종가와 사실상 같은 값이면 점을 붙이지 않아 선이 마지막 확정 점에서 평평하게 끝난다
-       (수직 낙하·없는 거래일 만들지 않기). */
-    var extended = false;
-    if (src !== 'close' && Math.abs(ddNow - lastDd) >= 0.005) {
-      rows.push({ x: rows.length, dd: ddNow, live: true });
-      dates.push(F.today());
-      extended = true;
+       확정 종가와 사실상 같은 값이면 점을 붙이지 않아 선이 마지막 확정 점에서 평평하게 끝난다. */
+    var extended = (src !== 'close' && Math.abs(ddNow - lastDd) >= 0.005);
+
+    /* 저점 — 고점 이후 최저점. 지금 값이 더 낮으면 지금이 저점이다. */
+    var ti = 0, best = 1e9;
+    path.forEach(function (p, k) { if (p[1] < best) { best = p[1]; ti = k; } });
+    if (extended && ddNow < best) { best = ddNow; ti = path.length; }
+    var tiAbs = pi + ti;
+    var troughClose = now.peak_close * (1 + best / 100);
+
+    var troughPath = [];
+    if (troughClose > 0) {
+      for (var c = Math.max(0, tiAbs - 252); c < idx.length; c++) {
+        troughPath.push([c - tiAbs, (idx[c][1] / troughClose - 1) * 100]);
+      }
+      if (extended) {
+        troughPath.push([idx.length - tiAbs, ((1 + ddNow / 100) / (1 + best / 100) - 1) * 100]);
+      }
     }
 
-    var t = 0, best = 1e9;
-    rows.forEach(function (r) { if (r.dd < best) { best = r.dd; t = r.x; } });
-    var td = rows[t] ? rows[t].dd : now.dd;
-    var troughBase = 1 + td / 100;
+    var offset = extended ? path.length : path.length - 1;
+    var troughOffset = offset - ti;
     return {
       dd: ddNow, src: src, label: label,
-      peak: rows.map(function (r) { return [r.x, r.dd]; }),
-      trough: rows.map(function (r) {
-        return [r.x - t, ((1 + r.dd / 100) * ratio / troughBase - 1) * 100];
-      }),
-      offset: rows[rows.length - 1].x,
-      confOffset: confOffset,
-      troughOffset: rows[rows.length - 1].x - t,
-      troughConf: confOffset - t,
-      firstDate: dates[0], lastDate: dates[dates.length - 1], lastConfirmed: lastConfirmed,
-      liveDate: extended ? dates[dates.length - 1] : null, n: rows.length
+      peak: prePath.concat(extended ? path.concat([[path.length, ddNow]]) : path),
+      trough: troughPath,
+      offset: offset,
+      confOffset: path.length - 1,
+      troughOffset: troughOffset,
+      troughConf: (path.length - 1) - ti,
+      firstDate: dates[0], lastDate: extended ? F.today() : lastConfirmed, lastConfirmed: lastConfirmed,
+      liveDate: extended ? F.today() : null, n: offset + 1,
+      troughDate: idx[tiAbs] ? idx[tiAbs][0] : null
     };
   }
 
@@ -1296,14 +1318,12 @@
     ovNowBadge(view, showToday, today);   /* 차트를 못 그려도 숫자는 맞춰 둔다 */
     var on = cases.filter(function (c) { return OV_OFF.indexOf(c.id) < 0; });
     var series = on.map(function (c) { return { id: c.id, short: c.short, color: c.color, pts: ovCasePath(c, scale) }; });
-    var todayPts = (today && showToday) ? (scale === 'trough' ? today.trough : today.peak) : [];
-    var lim2 = 252 * (OV.win || 1);
-    todayPts = todayPts.filter(function (p) { return p[0] >= -lim2 && p[0] <= lim2; });
-    if (scale === 'trough' && today && showToday) {
-      todayPts = today.trough.map(function (p) { return [p[0], 100 * (1 + p[1] / 100)]; });
-    } else if (today && showToday) {
-      todayPts = today.peak.map(function (p) { return [p[0], scale === 'pct' ? p[1] : 100 * (1 + p[1] / 100)]; });
-    }
+    /* 현재 선도 사례와 같은 변환(ovCasePath)을 탄다 — 같은 축·같은 밀도로 퍼지고 지금 점에서 끝난다 */
+    var todayPts = (today && showToday) ? ovCasePath({
+      prePath: (today.peak || []).filter(function (p) { return p[0] < 0; }),
+      path: (today.peak || []).filter(function (p) { return p[0] >= 0; }),
+      troughPath: today.trough || []
+    }, scale) : [];
 
     var W = 760, H = 320, pad = { l: 48, r: 66, t: 16, b: 28 };
     var all = series.reduce(function (a, s) { return a.concat(s.pts); }, []).concat(todayPts);

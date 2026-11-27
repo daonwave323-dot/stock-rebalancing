@@ -48,7 +48,7 @@
    * 기본 둘(칼럼·리포트)은 목록 묶음 이름이라 고정. 사용자가 더한 분류는 이 브라우저에 남긴다.
    * 글에는 cat(분류 이름)을 함께 남기고, cat이 없는 예전 글은 kind로 칼럼/리포트를 정한다. */
   var CKEY = 'cats';
-  var BASE_CATS = ['칼럼', '리포트'];
+  var BASE_CATS = ['리포트', '칼럼', '내 포트'];
   var catMode = null, catFrom = null;
 
   function customCats() {
@@ -58,6 +58,13 @@
   }
   function saveCats(a) { return S.set(CKEY, a); }
   function catNames() { return BASE_CATS.concat(customCats().map(function (c) { return c.name; })); }
+
+  /* 목록·카드에 보이는 묶음 순서 — '내 포트'를 앞에 두고, 사용자가 더한 분류는 뒤에 */
+  function catOrder() {
+    var base = ['내 포트', '리포트', '칼럼'];
+    return base.concat(customCats().map(function (c) { return c.name; }))
+      .filter(function (c, i, a) { return a.indexOf(c) === i && catExists(c); });
+  }
   function catExists(name) { return catNames().indexOf(name) >= 0; }
   function isBaseCat(name) { return BASE_CATS.indexOf(name) >= 0; }
   function catOf(it) {
@@ -225,27 +232,39 @@
       '<ul class="post-list">' + rows.join('') + '</ul></section>';
   }
 
+  function catNoteFor(items) {
+    var anyPdf = (items || []).some(function (it) { return isPdf(it); });
+    return anyPdf ? 'PDF · 클릭하면 새 탭에서 열립니다' : '짧은 글 · 사이트 안에서 읽습니다';
+  }
+  function catEmptyMsg(c) {
+    if (c === '리포트') return '아직 리포트가 없습니다 — content/reports/ 에 PDF를 올리면 여기에 나타냅니다.';
+    if (c === '칼럼') return '아직 칼럼이 없습니다 — content/notes/ 에 .md 를 올리거나 위에서 직접 쓰면 여기에 나타납니다.';
+    return '아직 이 분류에 글이 없습니다.';
+  }
+  var CAT_ALWAYS = ['리포트', '칼럼'];   /* 비어 있어도 자리를 보여 주는 기본 분류 */
+
   function pagedCard(d, limit) {
     var left = limit, out = '';
-    [
-      { h: '리포트', note: 'PDF · 클릭하면 새 탭에서 열립니다', items: d.reports, art: false,
-        empty: '아직 리포트가 없습니다 — content/reports/ 에 PDF를 올리거나 위에서 파일을 올리면 여기에 나타납니다.' },
-      { h: '칼럼', note: '짧은 글 · 사이트 안에서 읽습니다', items: d.notes, art: false,
-        empty: '아직 칼럼이 없습니다 — content/notes/ 에 .md 를 올리거나 위에서 직접 쓰면 여기에 나타납니다.' },
-      { h: '지난 글', note: '사이트에 직접 쓴 글', items: d.arts, art: true, empty: '지난 글이 없습니다.' }
-    ].forEach(function (s) {
-      if (!s.items.length) { if (left > 0) out += s.art ? artSection([]) : section(s.h, s.note, [], s.empty); return; }
+    catOrder().forEach(function (c) {
       if (left <= 0) return;
-      var take = s.items.slice(0, left);
+      var mine = d.items.filter(function (x) { return catOf(x) === c; });
+      if (!mine.length) {
+        if (CAT_ALWAYS.indexOf(c) >= 0) out += section(esc2(c), catNoteFor([]), [], catEmptyMsg(c));
+        return;
+      }
+      var take = mine.slice(0, left);
       left -= take.length;
-      out += s.art ? artSection(take) : section(s.h, s.note, take, s.empty);
+      out += section(esc2(c), catNoteFor(mine), take, catEmptyMsg(c));
     });
+    if (d.arts.length && left > 0) {
+      out += artSection(d.arts.slice(0, left));
+    }
     return out;
   }
 
   function pagedList(d, limit) {
     var left = limit, out = '';
-    var cats = ['리포트', '칼럼'].concat(customCats().map(function (c) { return c.name; }));
+    var cats = catOrder();
     cats.forEach(function (c) {
       var mine = d.items.filter(function (x) { return catOf(x) === c; });
       if (!mine.length || left <= 0) return;
