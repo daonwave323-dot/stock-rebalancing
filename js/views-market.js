@@ -204,18 +204,24 @@
     bindHomeRows(view);
     if (st.mapScope !== 'SECTOR') {
       var box = view.querySelector('#mapbox');
-      if (box) Treemap.draw(box, cells, function (key, data) {
+      if (box) {
+        // 칸 폭은 그리기 직후에 정해진다. 한 번 더 그리고, 크기가 바뀌면 다시 그린다(찌그러짐 방지).
+        requestAnimationFrame(function () { if (document.body.contains(box)) Treemap.draw(box, cells, pick); });
+        if (w.ResizeObserver) {
+          if (box.__ro) box.__ro.disconnect();
+          box.__ro = new ResizeObserver(function () { Treemap.draw(box, cells, pick); });
+          box.__ro.observe(box);
+        }
+      }
+      var pick = function (key, data) {
         if (st.mapScope === 'SOX') {
           var row = (Mkt.rows(market, basis)).filter(function (r) { return NameKo.ind(r.industry) === key || r.name === key; })[0];
           if (row) openIndustry(row.sector, row.industry, key);
           return;
         }
         openSector(data && data.sectorEn ? data.sectorEn : key);
-      });
-      w.addEventListener('resize', function () {
-        var b2 = document.getElementById('mapbox');
-        if (b2 && b2.offsetParent) Treemap.draw(b2, cells, function () {});
-      }, { once: true });
+      };
+      if (box) Treemap.draw(box, cells, pick);
     }
     startPoll(view);
   }
