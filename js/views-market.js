@@ -182,6 +182,26 @@
     return h;
   }
 
+  /* 목록 머리글을 붙일 높이 — 위에 붙은 머리(.mkt-top + 상단 바) 바로 아래에 표 머리글을 둔다.
+     높이는 화면 폭·글자 크기 설정에 따라 달라지므로 그릴 때마다 재고, 창 크기가 바뀌면 다시 잰다. */
+  function setListTop(view) {
+    var top = view.querySelector('.mkt-top');
+    var wraps = view.querySelectorAll('.lstwrap');
+    if (!top || !wraps.length) return;
+    var stick = parseFloat(getComputedStyle(top).top) || 0;
+    var t = Math.round(stick + top.offsetHeight + 1) + 'px';
+    Array.prototype.forEach.call(wraps, function (el) { el.style.setProperty('--lst-top', t); });
+  }
+  var listTopBound = false;
+  function bindListTop() {
+    if (listTopBound) return;
+    listTopBound = true;
+    w.addEventListener('resize', function () {
+      var v = document.getElementById('view');
+      if (v && v.querySelector('.mkt-top')) setListTop(v);
+    });
+  }
+
   function statusLine() {
     var s = Mkt.snap;
     if (!s) return '';
@@ -241,7 +261,7 @@
         var lk = Mkt.look(it.sym, basis);
         return { it: it, q: q, lk: lk };
       });
-      h += '<div class="tbl-wrap" style="margin-top:8px"><table class="mkt fixed"><thead><tr>' +
+      h += '<div class="tbl-wrap lstwrap" style="margin-top:8px"><table class="mkt fixed lst wlst"><thead><tr>' +
         '<th class="nm c-name">종목</th><th class="c-price">가격</th><th class="c-chg">등락</th>' +
         '<th class="c-cap">시가총액</th><th class="c-vol">거래량</th>' +
         '<th class="hcell act c-heart" scope="col">관심</th></tr></thead><tbody>';
@@ -249,8 +269,9 @@
         var sym = r.it.sym, cur = r.q ? r.q.cur : (market === 'kr' ? 'KRW' : 'USD');
         var price = r.lk ? r.lk.price : null;
         var c = r.lk ? r.lk.chg : null;
+        var wname = dispName({ sym: sym, market: market, name: (r.q && (r.q.name || r.q.desc)) || r.it.name || '' });
         h += '<tr class="row" data-stock="' + esc(sym) + '">' +
-          '<td class="nm c-name"><span class="sym">' + esc(sym) + '</span><span class="desc">' + esc((r.q && (r.q.name || r.q.desc)) || r.it.name || '') + '</span></td>' +
+          '<td class="nm c-name">' + nameSpans(wname, sym, 0) + '</td>' +
           '<td class="c-price">' + px(price, cur) + '</td>' +
           '<td class="c-chg">' + chg(c, market) + '</td>' +
           '<td class="c-cap">' + (r.q ? Mkt.capShort(r.q.mcap, cur) : '—') + '</td>' +
@@ -321,7 +342,8 @@
         (st.sort === k) + '">' + SORTS[k] + '</button>';
     });
     h += '</span></span></div>' + table(ranks, market, true) +
-      '<div class="note">' + SORTS[st.sort] + ' 순 상위 30종목. 왼쪽 숫자가 등수이고, 행을 누르면 종목 상세가 열립니다.</div></section>';
+      '<div class="note ranknote">' + SORTS[st.sort] + ' 순 상위 30종목. 왼쪽 숫자가 등수, 그 옆 큰 글씨가 종목 이름, 옆의 작은 글씨가 종목코드입니다. ' +
+      '좁은 화면에서는 거래대금·시가총액 열을 접습니다(값은 종목 상세에 있습니다). 행을 누르면 종목 상세가 열립니다.</div></section>';
 
     h += '<div class="note">값의 출처 — ' + esc((Mkt.snap && (Mkt.snap.sources || []).join(' · ')) || '') +
       '. 모두 공개 시세를 웹이 직접 받은 참고 자료이며 투자 권유가 아닙니다.</div>';
@@ -334,6 +356,8 @@
     bindWatch(view);
     bindHomeRows(view);
     bindHearts(view);
+    bindListTop();
+    setListTop(view);
     if (st.mapScope !== 'SECTOR') {
       var box = view.querySelector('#mapbox');
       if (box) {
@@ -591,15 +615,41 @@
     return list.slice(0, 30);
   }
 
+  /* ------------------------------------------------------------ 이름 표기
+     목록 한 줄은 `등수  이름(크게)  코드(작게)` 순서다. 이름이 코드 아래 줄로 내려가면
+     줄 높이가 두 배가 되어 화면에 두어 줄만 보인다 — 한 줄에 붙여 둔다.
+     국내는 한국어 이름(data/names-kr.json), 미국은 영어 회사명을 제목으로 쓰고 티커를 옆에 작게 둔다. */
+  /* 미국 회사명은 머리말(Inc.·Corporation·Holdings…)을 더 덜어 짧게 — 좁은 화면에서도 한 줄에 남게. */
+  function coLabel(s) {
+    var t = shortCo(s);
+    t = t.replace(/\s+(Inc|Incorporated|Corp|Corporation|Co|Ltd|Limited|plc|PLC)(\.|\b).*$/i, '');
+    t = t.replace(/\s+(Holdings?|Group|Bancorp)\b\.?.*$/i, '');
+    t = t.replace(/\s+(and\s+)?(Company|Companies)\b.*$/i, '');
+    t = t.replace(/,?\s+(PBC|Class\s+[A-Z])\b.*$/i, '');
+    return t.replace(/[\s,&]+$/, '');
+  }
+
+  function dispName(r) {
+    if ((r.market || st.market) === 'kr') return Mkt.krName(r.sym) || r.name || r.desc || r.sym;
+    return coLabel(r.name || r.desc || '') || r.sym;
+  }
+
+  function nameSpans(name, sym, rank) {
+    return '<span class="nline">' +
+      (rank ? '<span class="rk2" aria-label="' + rank + '등">' + rank + '</span>' : '') +
+      '<span class="nm2">' + esc(name) + '</span>' +
+      '<span class="cd2">' + esc(sym) + '</span></span>';
+  }
+
+  /* 목록 표 — 이름·가격·등락·(거래대금)·(시가총액)·관심. 좁은 화면에서는 보조 열을 접는다. */
   function table(rows, market, numbered) {
-    var h = '<div class="tbl-wrap"><table class="mkt fixed"><thead><tr>' +
+    var h = '<div class="tbl-wrap lstwrap"><table class="mkt fixed lst"><thead><tr>' +
       '<th class="nm c-name">종목</th><th class="c-price">가격</th><th class="c-chg">등락</th>' +
       '<th class="c-val">거래대금</th><th class="c-cap">시가총액</th>' +
       '<th class="hcell c-heart" scope="col">관심</th></tr></thead><tbody>';
     rows.forEach(function (r, i) {
       h += '<tr class="row" data-stock="' + esc(r.sym) + '">' +
-        '<td class="nm c-name">' + (numbered ? '<span class="rk" aria-label="' + (i + 1) + '등">' + (i + 1) + '</span>' : '') +
-          '<span class="sym">' + esc(r.sym) + '</span><span class="desc">' + esc(r.name || r.desc || '') + '</span></td>' +
+        '<td class="nm c-name">' + nameSpans(dispName(r), r.sym, numbered ? (i + 1) : 0) + '</td>' +
         '<td class="c-price">' + px(r.price, r.cur) + '</td>' +
         '<td class="c-chg">' + chg(r.chg, market) + '</td>' +
         '<td class="vol c-val">' + Mkt.money(r.val, r.cur) + '</td>' +
@@ -661,7 +711,8 @@
       if (hits.length) {
         ac.innerHTML = hits.map(function (x) {
           return '<button type="button" data-pick="' + esc(x.sym) + '">' +
-            '<span class="t">' + esc(x.sym) + '</span><span>' + esc(x.name || '') + '</span>' +
+            '<span class="nm2">' + esc(x.name || x.sym) + '</span>' +
+            '<span class="cd2">' + esc(x.sym) + '</span>' +
             '<span class="m">' + esc(x.exch || marketLabel(x.market)) + '</span></button>';
         }).join('');
       } else {
@@ -811,6 +862,8 @@
     bindTop(view, false);
     bindHomeRows(view);
     bindHearts(view);
+    bindListTop();
+    setListTop(view);
     view.querySelectorAll('[data-list-sort]').forEach(function (b) {
       b.addEventListener('click', function () {
         st.sort = b.getAttribute('data-list-sort');
@@ -838,7 +891,8 @@
     var basis = st.basis;
     var lk = Mkt.look(sym, basis);
     var h = topBar(false);
-    h += '<div class="crumb"><a href="#/market">← 증시</a> · ' + esc(sym) + '</div>';
+    h += '<div class="crumb"><a href="#/market">← 증시</a> · ' + esc((q && q.name) || sym) +
+      ' <span class="cd2">' + esc(sym) + '</span></div>';
     if (!q) {
       h += '<section class="panel"><div class="empty">' + esc(sym) + ' 자료가 스냅샷에 없습니다.<br>' +
         '<span class="small">관심 종목에 담으면 5분 갱신 파이프라인이 다음 주기에 받아 옵니다. 값을 지어내지 않습니다.</span></div></section>';

@@ -37,9 +37,12 @@
     M.triedAt = Date.now();
     return Promise.all([
       getJSON('data/market.json'),
-      getJSON('data/live.json', true)
+      getJSON('data/live.json', true),
+      getJSON('data/names-kr.json', true)   // 국내 코드→한국어 이름(네이버 목록). 없으면 스냅샷 이름을 쓴다.
     ]).then(function (a) {
       M.snap = a[0];
+      M.krNames = (a[2] && a[2].names) || {};
+      M.krNamesAt = (a[2] && a[2].asOf) || '';
       // 자리표시(updatedAt 없음)는 '없는 것'으로 본다 — 값을 지어내지 않는다.
       M.live = (a[1] && a[1].updatedAt) ? a[1] : null;
       M.liveAt = M.live ? Date.parse(M.live.updatedAt) : 0;
@@ -103,6 +106,12 @@
     return (M.snap && M.snap.symbols && M.snap.symbols[sym]) || null;
   };
 
+  /* 국내 종목의 한국어 이름 — data/names-kr.json(네이버 금융 시가총액 목록). 없으면 null. */
+  M.krName = function (sym) {
+    var m = M.krNames && M.krNames[baseSym(sym)];
+    return (m && m.name) || null;
+  };
+
   M.liveSym = function (sym) {
     if (!M.live || !M.live.symbols) return null;
     var S2 = M.live.symbols;
@@ -116,7 +125,7 @@
     if (!s && !l) return null;
     var out = {
       sym: sym,
-      name: (s && (s.name || s.desc)) || (l && l.name) || sym,
+      name: M.krName(sym) || (s && (s.name || s.desc)) || (l && l.name) || sym,
       desc: (s && s.desc) || '',
       market: (s && s.market) || (/^\d{6}$/.test(sym) ? 'kr' : 'us'),
       cur: (s && s.cur) || (l && l.currency) || 'USD',
@@ -297,7 +306,7 @@
         if (market && r.market !== market) return;
         if (seen[k]) return;
         seen[k] = 1;
-        out.push({ sym: k, name: r.name || r.desc || k, desc: r.desc || '', market: r.market,
+        out.push({ sym: k, name: M.krName(k) || r.name || r.desc || k, desc: r.desc || '', market: r.market,
           exch: r.exch || r.board || '', mcap: r.mcap });
       });
     }
@@ -310,7 +319,7 @@
         if (seen[key]) return;
         seen[key] = 1;
         var snap = M.sym(key);
-        out.push({ sym: key, name: (snap && (snap.name || snap.desc)) || l.name || key,
+        out.push({ sym: key, name: M.krName(key) || (snap && (snap.name || snap.desc)) || l.name || key,
           desc: (snap && snap.desc) || '', market: mk, exch: '', mcap: l.marketCap });
       });
     }
