@@ -13,7 +13,7 @@
 
   var st = {
     market: 'us', basis: 'regular', mapScope: 'all',
-    sort: 'cap', sortDir: 'desc', range: '6m',
+    sort: 'cap', sortDir: 'desc', range: '1y',
     maOff: localStorage.getItem('stockrebal.mkt.maoff') || '',
     timer: null, lastLive: 0, query: '', hits: [], probe: null, note: ''
   };
@@ -23,11 +23,11 @@
   var RANGES = [['6m', '6개월', 126], ['1y', '1년', 252], ['5y', '5년', 1260]];
   function rangeN(k) {
     for (var i = 0; i < RANGES.length; i++) if (RANGES[i][0] === k) return RANGES[i][2];
-    return 126;
+    return 252;
   }
   function rangeLabel(k) {
     for (var i = 0; i < RANGES.length; i++) if (RANGES[i][0] === k) return RANGES[i][1];
-    return '6개월';
+    return '1년';
   }
 
   /* 5년을 고른 채로 들어오면 봉이 촘촘한 일봉 대신 주봉으로 연다(기존 Candles.fold 사용). */
@@ -243,7 +243,7 @@
     }
     h += '<div class="note">' + (market === 'kr'
       ? '국내 지수는 코스피·코스닥입니다(네이버·트레이딩뷰 지연 시세).'
-      : '나스닥100·VIX는 실제 지수(^NDX·^VIX)입니다. S&P500·다우존스·러셀2000·반도체는 지수 값이 없어 ETF(SPY·DIA·IWM·SOXX)로 대신합니다(ETF 대체). 선은 최근 6개월 종가입니다.') + '</div>';
+      : '나스닥100·VIX는 실제 지수(^NDX·^VIX)입니다. S&P500·다우존스·러셀2000·반도체는 지수 값이 없어 ETF(SPY·DIA·IWM·SOXX)로 대신합니다(ETF 대체). 선은 최근 1년 일봉 종가입니다 — 카드를 누르면 같은 1년 일봉 캔들 차트가 열립니다.') + '</div>';
     h += '</section>';
 
     /* ② 관심 종목 */
@@ -386,13 +386,33 @@
   }
 
   /* ------------------------------------------------------------ 지수 미니 차트
-     지수 카드 미니차트는 지수 봉만 담은 작은 파일(data/candles-index.json)의 최근 6개월(약 126거래일)
-     종가를 면+선으로 그린다. 종목 봉 큰 파일(data/candles.json)은 이 화면에서 받지 않는다.
-     live.json 에 그 심볼의 dayBars 가 있으면 날짜로 합쳐 더 새 값을 쓴다(^NDX·^VIX).
-     봉이 없으면 선 없이 숫자만 남긴다. 색은 그 화면의 등락 색 규칙(국내 상승 빨강·하락 파랑 /
-     미국 상승 초록·하락 빨강)을 그대로 쓴다. */
-  var SPARK_N = 126;      // 6개월(거래일)
+     지수 카드 미니차트는 지수 봉만 담은 작은 파일(data/candles-index.json)의 최근 1년(약 252거래일)
+     종가를 면+선으로 그린다. 카드를 누르면 열리는 큰 캔들 차트도 같은 일봉 1년을 기본으로 하므로
+     두 그림의 구간이 같다(고점·저점 자리가 눈으로 맞는다). 종목 봉 큰 파일(data/candles.json)은
+     이 화면에서 받지 않는다. live.json 에 그 심볼의 dayBars 가 있으면 날짜로 합쳐 더 새 값을 쓴다
+     (^NDX·^VIX). 봉이 없으면 선 없이 숫자만 남긴다. 색은 그 화면의 등락 색 규칙
+     (국내 상승 빨강·하락 파랑 / 미국 상승 초록·하락 빨강)을 그대로 쓴다. */
+  var SPARK_N = 252;      // 1년(거래일) — 큰 캔들 차트의 기본 기간과 같다
   var SPARK_H = 40;
+  var SPARK_GAP = 6.5;    // 그린 점 사이 간격(px) — 6px 안팎이면 좁은 카드에서도 선이 완만하다
+  var SPARK_MIN_K = 12, SPARK_MAX_K = 60;   // 그리는 점 수의 아래·위 한도
+
+  /* 그리기용 다운샘플 — 값은 실제 종가 그대로 두고 그리는 점만 줄인다.
+     1년 일봉 252개를 폭 136px 카드에 그대로 찍으면 하루하루 잡음이 1px 안쪽 간격으로 늘어서
+     선이 지렁이처럼 꼬불거린다. 카드 폭에 맞춰 점 수를 정하고(넓으면 촘촘히, 좁으면 듬성듬성)
+     같은 간격으로 실제 종가를 골라 잇는다 — 구간의 마지막 봉까지 꼭 넣어 끝점이 지금 종가이고,
+     고점·저점 자리는 큰 캔들 차트와 같다(값을 평균으로 깎으면 봉우리가 납작해져 두 그림이 달라진다). */
+  function sparkShape(values, W) {
+    var n = values.length;
+    if (n < 3) return values.slice();
+    var k = Math.round(W / SPARK_GAP);
+    k = Math.max(SPARK_MIN_K, Math.min(SPARK_MAX_K, k));
+    if (k >= n) return values.slice();
+    var out = [];
+    for (var i = 0; i < k - 1; i++) out.push(values[Math.round(i * (n - 1) / (k - 1))]);
+    out.push(values[n - 1]);   // 마지막 점 = 지금 종가
+    return out;
+  }
 
   function toneColor(tone) {
     var el = document.createElement('span');
@@ -473,7 +493,7 @@
   function paintSpark(cv, sym, bars, market, basis) {
     var sp = sparkPoints(sym, bars, basis);
     var pts = sp.pts.slice(-SPARK_N);
-    var closes = pts.map(function (p) { return p.c; });
+    var closes = pts.map(function (p) { return p.c; });   // 1년 종가(자료). 카드의 숫자는 이 값 그대로다
     var liveDot = sp.liveDot;
     var W = cv.clientWidth || (cv.parentNode && cv.parentNode.clientWidth) || 140, H = SPARK_H;
     var dpr = Math.min(2, w.devicePixelRatio || 1);
@@ -487,13 +507,18 @@
       return;
     }
     cv.style.display = 'block';
-    cv.setAttribute('data-points', String(closes.length));   // 시험이 봉 수를 읽는다(6개월 = 126)
+    cv.setAttribute('data-points', String(closes.length));   // 시험이 봉 수를 읽는다(1년 = 252)
     cv.setAttribute('data-range', String(closes.length ? pts[0].d + '~' + pts[pts.length - 1].d : ''));
+    // 그리는 점 — 값은 그대로 두고 점만 줄인다(다운샘플). data-draw 는 시험이 읽는다.
+    var draw = sparkShape(closes, W);
+    cv.setAttribute('data-draw', String(draw.length));
+    cv.__spark = { closes: closes, draw: draw };   // 시험이 그린 값·자료 값을 읽는다
 
+    // 세로 눈금은 1년 종가 전체의 최소·최대로 잡는다 — 카드 숫자·큰 캔들과 같은 범위를 쓴다.
     var lo = Math.min.apply(null, closes), hi = Math.max.apply(null, closes);
     if (hi <= lo) hi = lo + 1;
     var padT = 4, padB = 6, gh = H - padT - padB;
-    var xf = function (i) { return (i / (closes.length - 1)) * (W - 3) + 1.5; };
+    var xf = function (i) { return (i / (draw.length - 1)) * (W - 3) + 1.5; };
     var yf = function (v) { return padT + (hi - v) / (hi - lo) * gh; };
 
     var col = lineColor(cv, market, closes);
@@ -504,11 +529,11 @@
     grd.addColorStop(0, 'rgba(' + rgb + ',.30)');
     grd.addColorStop(1, 'rgba(' + rgb + ',.02)');
     ctx.beginPath();
-    pts.forEach(function (p, i) {
-      var px2 = xf(i), py = yf(p.c);
+    draw.forEach(function (v, i) {
+      var px2 = xf(i), py = yf(v);
       if (i === 0) ctx.moveTo(px2, py); else ctx.lineTo(px2, py);
     });
-    ctx.lineTo(xf(closes.length - 1), H - padB + 2);
+    ctx.lineTo(xf(draw.length - 1), H - padB + 2);
     ctx.lineTo(xf(0), H - padB + 2);
     ctx.closePath();
     ctx.fillStyle = grd; ctx.fill();
@@ -517,20 +542,20 @@
     ctx.strokeStyle = 'rgba(255,255,255,.22)';
     ctx.lineWidth = 0.8;
     ctx.setLineDash([3, 3]);
-    ctx.beginPath(); ctx.moveTo(0, yf(closes[0])); ctx.lineTo(W, yf(closes[0])); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, yf(draw[0])); ctx.lineTo(W, yf(draw[0])); ctx.stroke();
     ctx.setLineDash([]);
 
     // 3) 선
     ctx.strokeStyle = col; ctx.lineWidth = 1.6; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
     ctx.beginPath();
-    pts.forEach(function (p, i) {
-      var px2 = xf(i), py = yf(p.c);
+    draw.forEach(function (v, i) {
+      var px2 = xf(i), py = yf(v);
       if (i === 0) ctx.moveTo(px2, py); else ctx.lineTo(px2, py);
     });
     ctx.stroke();
 
-    // 4) 마지막 점
-    var lx = xf(closes.length - 1), ly = yf(closes[closes.length - 1]);
+    // 4) 마지막 점 — 실제 마지막 종가(다운샘플의 끝도 실제 값에 붙여 둔다)
+    var lx = xf(draw.length - 1), ly = yf(draw[draw.length - 1]);
     ctx.fillStyle = col;
     ctx.beginPath(); ctx.arc(lx, ly, 2.6, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = 'rgba(26,31,43,.9)';
