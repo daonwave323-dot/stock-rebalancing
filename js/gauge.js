@@ -800,7 +800,7 @@
       '<div class="g-secbody"' + (open ? '' : ' hidden') + '>' +
         '<div class="g-ctl">' + modeSegHtml() +
           '<button class="btn ghost sm" type="button" id="gLiveRefresh">실시간 새로고침</button></div>' +
-        '<p class="g-cap" id="gBasisHint">기준(정규장·프리마켓)은 화면 맨 위에서 고릅니다.</p>' +
+        '<p class="g-cap" id="gBasisHint">기준(정규장·프리마켓)은 위 밸류게이지 카드에서 고릅니다.</p>' +
         '<p class="g-cap" id="gModeNote">' + modeNote(snap) + '</p>' +
         '<p class="g-six" id="gSix">' + sixLine(values) + '</p>' +
         '<button class="btn ghost sm" type="button" id="gIndsBtn" aria-expanded="' + (indsOpen ? 'true' : 'false') + '" style="margin-top:2px">여섯 지표 직접 조작 <span class="mark">' + (indsOpen ? '접기 ▴' : '펼치기 ▾') + '</span></button>' +
