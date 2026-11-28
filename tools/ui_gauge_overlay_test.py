@@ -242,6 +242,20 @@ def main():
         tr1 = pg.evaluate("() => [...document.querySelectorAll('#ovChart svg text')].map(e=>e.textContent)")
         check('저점 보기 축이 ±1개월', any('−1개월' in x for x in tr1) and any('+1개월' in x for x in tr1), tr1[:8])
         pg.screenshot(path=os.path.join(SHOTS, 'gauge-390-overlay-1m.png'))
+        # 창이 지금 점보다 좁으면 현재 점을 창 끝에 찍지 않는다(창 끝 값을 오늘 값처럼 보이지 않게)
+        curT = pg.evaluate("""()=>({inWin: document.querySelector('#ovChart').__ov.curInWin,
+          at: document.querySelector('#ovChart').__ov.curAt, dots: document.querySelectorAll('#ovChart circle').length})""")
+        check('1개월 저점 보기: 지금(저점 +%d일)이 창 안 — 현재 점 표시' % curT['at'],
+              curT['inWin'] and curT['dots'] == 1, curT)
+        pg.click('[data-ovscale="pct"]')
+        pg.wait_for_timeout(500)
+        curP = pg.evaluate("""()=>({inWin: document.querySelector('#ovChart').__ov.curInWin,
+          at: document.querySelector('#ovChart').__ov.curAt, dots: document.querySelectorAll('#ovChart circle').length,
+          basis: document.querySelector('#ovBasis').textContent,
+          texts: [...document.querySelectorAll('#ovChart text')].map(t=>t.textContent)})""")
+        check('1개월 낙폭 보기: 지금(고점 +%d일)이 창 밖 — 현재 점·이름표 없이 기준 줄에 적는다' % curP['at'],
+              curP['inWin'] is False and curP['at'] > 21 and curP['dots'] == 0 and '현재' not in curP['texts'] and '창 밖' in curP['basis'],
+              (curP['at'], curP['dots'], curP['basis'][-80:]))
         pg.click('[data-ovwin="3"]')
         pg.wait_for_timeout(350)
         pg.screenshot(path=os.path.join(SHOTS, 'gauge-390-overlay-3m.png'))

@@ -1604,13 +1604,24 @@
       s.push('<path d="' + d + '" fill="none" stroke="' + se.color + '" stroke-width="1.4" stroke-opacity="0.85" stroke-linejoin="round"/>');
     });
 
-    /* 현재 — 강조색으로 굵게 */
+    /* 현재 — 강조색으로 굵게.
+       지금 점이 고른 창 밖이면(예: 고점 +111거래일 vs 1개월 창) 선은 창 끝에서 끊기므로
+       끝점에 '현재' 점·이름표를 찍지 않는다 — 찍으면 창 끝 값이 오늘 값처럼 보인다.
+       그 사실은 아래 기준 줄(ovBasis)에 적는다. */
+    var curAt = today ? (scale === 'trough' ? today.troughOffset : today.offset) : null;
+    var curInWin = (curAt !== null && curAt !== undefined && curAt <= lim);
     if (todayPts.length) {
       var dt = todayPts.map(function (p, i) { return (i ? 'L' : 'M') + sx(p[0]).toFixed(1) + ' ' + sy(p[1]).toFixed(1); }).join('');
       s.push('<path d="' + dt + '" fill="none" stroke="var(--blue)" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round"/>');
-      var last = todayPts[todayPts.length - 1];
-      s.push('<circle cx="' + sx(last[0]).toFixed(1) + '" cy="' + sy(last[1]).toFixed(1) + '" r="4" fill="var(--blue)"/>');
-      s.push('<text x="' + Math.min(W - 2, sx(last[0]) + 6).toFixed(1) + '" y="' + (sy(last[1]) - 8).toFixed(1) + '" font-size="10.5" fill="var(--blue)">현재</text>');
+      if (curInWin) {
+        var last = todayPts[todayPts.length - 1];
+        s.push('<circle cx="' + sx(last[0]).toFixed(1) + '" cy="' + sy(last[1]).toFixed(1) + '" r="4" fill="var(--blue)"/>');
+        /* 이름표 — 오른쪽 여백(이름표 칸)에 걸리면 점 왼쪽 위로 붙여 사례 이름표와 겹치지 않게 */
+        var tx = sx(last[0]), ty = sy(last[1]) - 8;
+        var edge = tx > (W - pad.r - 26);
+        s.push('<text x="' + (edge ? tx - 7 : tx + 6).toFixed(1) + '" y="' + ty.toFixed(1) + '" font-size="10.5" fill="var(--blue)"' +
+          (edge ? ' text-anchor="end"' : '') + '>현재</text>');
+      }
     }
 
     /* 선 끝 이름표 — 겹치지 않게 위아래로 밀어 **전부** 그린다(원본 labelLayout) */
@@ -1629,7 +1640,7 @@
     });
     s.push('</svg>');
     host.innerHTML = s.join('');
-    host.__ov = { series: series, today: today, todayOn: showToday, todayPts: todayPts, scale: scale, sx: sx, pad: pad, W: W };
+    host.__ov = { series: series, today: today, todayOn: showToday, todayPts: todayPts, scale: scale, sx: sx, pad: pad, W: W, curInWin: curInWin, curAt: curAt };
 
     /* 기본 읽기 줄 — 현재 자리에서 */
     var day = !today ? null
@@ -1642,7 +1653,10 @@
     el('#ovBasis', view).textContent = (showToday
         ? '현재 — ' + (today ? today.label + ' · ' + cname(CT) + ' 낙폭 ' + F.pct(today.dd, 1) : '값 없음(live·확정 모두 없음)')
         : '현재 선을 껐습니다' + (today ? '(' + today.label + ' · ' + cname(CT) + ' 낙폭 ' + F.pct(today.dd, 1) + ')' : '')) +
-      ' · 창 = ' + (scale === 'trough' ? '저점' : '고점') + ' 기준 ±' + ovWinText(OV.win) + ' (자료는 고점 ±1년까지)';
+      ' · 창 = ' + (scale === 'trough' ? '저점' : '고점') + ' 기준 ±' + ovWinText(OV.win) + ' (자료는 고점 ±1년까지)' +
+      ((showToday && today && !curInWin)
+        ? ' · 지금은 ' + (scale === 'trough' ? '저점' : '고점') + ' +' + curAt + '거래일이라 고른 창 밖 — 현재 선이 창 끝에서 끊깁니다. 기간을 넓혀 보세요.'
+        : '');
   }
 
   /* 차트 위 현재 낙폭 큰 숫자 — '현재' 선과 같은 값·같은 출처. 토글을 끄면 함께 숨긴다. */
