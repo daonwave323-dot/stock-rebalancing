@@ -586,7 +586,8 @@
       '</div>' +
 
       '<section class="panel">' +
-        '<div class="panel-h"><h2>폭락 6사례</h2><span class="note">같은 눈금으로 다시 계산한 고점→저점, 그리고 지금과 가장 닮은 날</span>' +
+        '<div class="panel-h"><h2>폭락 6사례 <span class="dim" style="font-size:12px;font-weight:400">나스닥 ^NDX</span></h2>' +
+          '<span class="note">같은 눈금으로 다시 계산한 고점→저점, 그리고 지금과 가장 닮은 날 · 반도체 SOX 8사례는 매수 지표에서 SOXL을 고르면 나옵니다</span>' +
           '<span class="spacer"></span><a class="linkbtn" href="#/gauge/crash">전체 보기 →</a></div>' +
         '<div class="case-grid">' + caseCards + '</div>' +
       '</section>' +
