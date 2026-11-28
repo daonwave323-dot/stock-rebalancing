@@ -6,11 +6,29 @@
   'use strict';
 
   var SPANS = [
-    { key: 'day', label: '일봉', ma: [5, 20, 60, 120], unit: '일', window: 120, need: 20 },
-    { key: 'week', label: '주봉', ma: [5, 20, 60], unit: '주', window: 120, need: 15 },
-    { key: 'month', label: '월봉', ma: [5, 20, 60], unit: '개월', window: 0, need: 6 },
-    { key: 'year', label: '연봉', ma: [3, 5, 10], unit: '년', window: 0, need: 3 }
+    { key: 'day', label: '일봉', ma: [5, 20, 60, 120, 200], def: [20, 200], unit: '일', window: 120, need: 20 },
+    { key: 'week', label: '주봉', ma: [5, 20, 60, 200], def: [20, 200], unit: '주', window: 120, need: 15 },
+    { key: 'month', label: '월봉', ma: [5, 20], def: [20], unit: '개월', window: 0, need: 6 },
+    { key: 'year', label: '연봉', ma: [3, 5], def: [3], unit: '년', window: 0, need: 3 }
   ];
+
+  /* 이동평균선 색 — 기간으로 정한다(봉 단위가 바뀌어도 같은 기간 선은 같은 색).
+     기본 ON 인 20·200 이 가장 잘 읽혀야 하므로 20 은 금색, 200 은 하늘색을 준다.
+     가격선(연두 #3DD68C)·상승/하락 색과 겹치지 않는 색만 썼다. */
+  var MA_COLORS_BY_PERIOD = { 3: '#6fcf97', 5: '#6fcf97', 20: '#dcb05f', 60: '#a294e0', 120: '#d7dce6', 200: '#8FBEDC' };
+  var MA_COLORS = ['#dcb05f', '#8FBEDC', '#a294e0', '#6fcf97', '#d7dce6'];   // 예비(기간표에 없는 값)
+  function maColor(period) {
+    return MA_COLORS_BY_PERIOD[period] || MA_COLORS[0];
+  }
+
+  /* 기본으로 켜 두는 이동평균 — 봉 단위별 def 배열. 나머지는 기본 OFF(칩을 누르면 켜진다). */
+  function defaultOff() {
+    var out = [];
+    SPANS.forEach(function (s) {
+      s.ma.forEach(function (p) { if (s.def.indexOf(p) < 0) out.push(s.key + '|' + p); });
+    });
+    return out;
+  }
 
   function spanOf(key) {
     for (var i = 0; i < SPANS.length; i++) if (SPANS[i].key === key) return SPANS[i];
@@ -68,9 +86,7 @@
     } catch (e) { return fb; }
   }
 
-  var MA_COLORS = ['#8FBEDC', '#dcb05f', '#a294e0', '#6fcf97'];
-
-  /* box 안에 차트를 그린다. opts: {bars, span, market, maOff:{}, height}
+  /* box 안에 차트를 그린다. opts: {bars, span, market, maOff:{}, height, maBars}
      반환: {bars, span, note} */
   function draw(box, opts) {
     var canvas = box.querySelector('canvas');
@@ -88,7 +104,10 @@
     var sp = spanOf(opts.span);
     var all = opts.bars || [];
     var bars = fold(all, sp.key);
-    // opts.window 를 주면 그 값을 쓴다(0 = 자르지 않음 — 기간(6개월·1년·5년)을 화면이 먼저 잘라 넘길 때).
+    // opts.maBars — 이동평균을 계산할 자르기 전 봉(같은 봉 단위로 묶는다).
+    //   200일선처럼 창보다 긴 이동평균은 이 전체에서 계산해야 값이 나온다.
+    var maFull = opts.maBars ? fold(opts.maBars, sp.key) : null;
+    // opts.window 를 주면 그 값을 쓴다(0 = 자르지 않음 — 기간(1개월~1년)을 화면이 먼저 잘라 넘길 때).
     var win = opts.window != null ? opts.window : sp.window;
     if (win && bars.length > win) bars = bars.slice(bars.length - win);
 
@@ -149,12 +168,15 @@
       ctx.fillRect(x - bw / 2, y1, bw, hh);
     }
 
-    // 이동평균선
+    // 이동평균선 — 기간별 색(20=금색, 200=하늘색). 창 밖 과거 봉(opts.maBars)까지 계산해
+    // 창의 끝부분만 잘라 그리므로, 1개월 창에서도 200일선이 있는 구간부터 선이 그려진다.
     var maOff = opts.maOff || {};
-    sp.ma.forEach(function (period, idx) {
+    var maSrc = (maFull && maFull.length > bars.length) ? maFull : bars;
+    sp.ma.forEach(function (period) {
       if (maOff[sp.key + '|' + period]) return;
-      var line = sma(bars, period);
-      ctx.strokeStyle = MA_COLORS[idx % MA_COLORS.length];
+      var full = sma(maSrc, period);
+      var line = (maSrc === bars) ? full : full.slice(full.length - bars.length);
+      ctx.strokeStyle = maColor(period);
       ctx.lineWidth = 1.2;
       ctx.beginPath();
       var started = false;
@@ -307,5 +329,6 @@
 
   w.Candles = { spans: SPANS, draw: draw, fold: fold, usable: usable, spanOf: spanOf,
     loadFor: loadFor, cache: cache, weeks: cacheW, weeklyOf: weeklyOf,
-    drawNote: drawNote, key: candleKey }; 
+    drawNote: drawNote, key: candleKey,
+    sma: sma, maColor: maColor, defaultOff: defaultOff }; 
 })(window);

@@ -13,21 +13,25 @@
 
   var st = {
     market: 'us', basis: 'regular', mapScope: 'all',
-    sort: 'cap', sortDir: 'desc', range: '1y',
-    maOff: localStorage.getItem('stockrebal.mkt.maoff') || '',
+    sort: 'cap', sortDir: 'desc', range: '3m', sparkRange: '3m',
+    // 이평선 끄기 목록 — 새 기본값(20·200 켜짐, 5·60·120 꺼짐)은 저장 키를 새로 두어 옛 값과 섞이지 않게 한다.
+    // null = 저장값 없음 → Candles.defaultOff()(새 기본값)를 쓴다.
+    maOff: localStorage.getItem('stockrebal.mkt.maoff2'),
     timer: null, lastLive: 0, query: '', hits: [], probe: null, note: ''
   };
 
   /* 큰 차트 기간 — 일봉은 이만큼(거래일) 잘라 넘기고, 주·월·연봉 묶기는 기존 Candles.fold 가 한다.
-     일봉 자료는 최근 1년(약 252거래일)까지이고, 주·월·연봉은 담아 둔 5년 주봉(weekly)을 쓴다. */
-  var RANGES = [['6m', '6개월', 126], ['1y', '1년', 252], ['5y', '5년', 1260]];
+     일봉 자료는 최근 1년(약 252거래일)까지이고, 주·월·연봉은 담아 둔 5년 주봉(weekly)을 쓴다.
+     순서·기본값은 무아 님 결정(2026-11-28): 1개월·3개월·6개월·1년·5년, 기본 3개월(약 63거래일).
+     5년은 큰 차트에서만 고른다(미니 차트 기간은 1년까지). */
+  var RANGES = [['1m', '1개월', 21], ['3m', '3개월', 63], ['6m', '6개월', 126], ['1y', '1년', 252], ['5y', '5년', 1260]];
   function rangeN(k) {
     for (var i = 0; i < RANGES.length; i++) if (RANGES[i][0] === k) return RANGES[i][2];
-    return 252;
+    return 63;
   }
   function rangeLabel(k) {
     for (var i = 0; i < RANGES.length; i++) if (RANGES[i][0] === k) return RANGES[i][1];
-    return '1년';
+    return '3개월';
   }
 
   /* 5년을 고른 채로 들어오면 봉이 촘촘한 일봉 대신 주봉으로 연다(기존 Candles.fold 사용). */
@@ -232,6 +236,7 @@
     /* ① 지수 */
     h += '<section class="panel"><div class="card-h"><h2>주요 지수</h2>' +
       '<span class="right"><span class="daytag">' + (basis === 'after' ? '프리마켓' : '정규장') + '</span></span></div>';
+    h += sparkRangeRow();
     if (!idx.length) {
       h += '<div class="empty">지수 자료를 받지 못했습니다.</div>';
     } else {
@@ -246,10 +251,9 @@
           '</button>';
       });
       h += '</div>';
+      h += sparkMaLegend();
     }
-    h += '<div class="note">' + (market === 'kr'
-      ? '국내 지수는 코스피·코스닥입니다(5분 갱신 값 · 지연될 수 있음). 선은 최근 1년 일봉 종가입니다 — 카드를 누르면 같은 1년 일봉 캔들 차트가 열립니다.'
-      : '나스닥100·VIX는 실제 지수(^NDX·^VIX)입니다. S&P500·다우존스·러셀2000·반도체는 지수 값이 없어 ETF(SPY·DIA·IWM·SOXX)로 대신합니다(ETF 대체). 선은 최근 1년 일봉 종가입니다 — 카드를 누르면 같은 1년 일봉 캔들 차트가 열립니다.') + '</div>';
+    h += '<div class="note" id="sparknote">' + esc(sparkNote(market)) + '</div>';
     h += '</section>';
 
     /* ② 관심 종목 */
@@ -362,6 +366,7 @@
     bindTop(view, true);
     bindWatch(view);
     bindHomeRows(view);
+    bindSparkRanges(view, market, basis);
     bindHearts(view);
     bindListTop();
     setListTop(view);
@@ -392,14 +397,44 @@
   }
 
   /* ------------------------------------------------------------ 지수 미니 차트
-     지수 카드 미니차트는 지수 봉만 담은 작은 파일(data/candles-index.json)의 최근 1년(약 252거래일)
-     종가를 면+선으로 그린다. 카드를 누르면 열리는 큰 캔들 차트도 같은 일봉 1년을 기본으로 하므로
-     두 그림의 구간이 같다(고점·저점 자리가 눈으로 맞는다). 종목 봉 큰 파일(data/candles.json)은
+     지수 카드 미니차트는 지수 봉만 담은 작은 파일(data/candles-index.json)의 일봉 종가를
+     면+선으로 그린다. 기간은 패널 위 전환(1개월·3개월·6개월·1년)으로 바꾸고 기본은 3개월(약 63거래일).
+     카드를 누르면 열리는 큰 캔들 차트도 같은 기간으로 열리므로 두 그림의 구간이 같다
+     (고점·저점 자리가 눈으로 맞는다). 종목 봉 큰 파일(data/candles.json)은
      이 화면에서 받지 않는다. live.json 에 그 심볼의 dayBars 가 있으면 날짜로 합쳐 더 새 값을 쓴다
      (^NDX·^VIX). 봉이 없으면 선 없이 숫자만 남긴다. 색은 그 화면의 등락 색 규칙
      (국내 상승 빨강·하락 파랑 / 미국 상승 초록·하락 빨강)을 그대로 쓴다. */
-  var SPARK_N = 252;      // 1년(거래일) — 큰 캔들 차트의 기본 기간과 같다
+  /* 미니 차트 기간 — 큰 차트와 같은 키를 쓰고, 5년은 큰 차트에서만 고를 수 있다. */
+  var SPARK_RANGES = [['1m', '1개월', 21], ['3m', '3개월', 63], ['6m', '6개월', 126], ['1y', '1년', 252]];
+  var SPARK_N = 252;      // 자료 상한 — 일봉 1년(252거래일)
   var SPARK_H = 40;
+  function sparkN(k) {
+    for (var i = 0; i < SPARK_RANGES.length; i++) if (SPARK_RANGES[i][0] === k) return SPARK_RANGES[i][2];
+    return 63;            // 기본 3개월
+  }
+  function sparkLabelOf(k) {
+    for (var i = 0; i < SPARK_RANGES.length; i++) if (SPARK_RANGES[i][0] === k) return SPARK_RANGES[i][1];
+    return '3개월';
+  }
+  /* 기간 전환 — 주요 지수 패널 제목 아래 한 줄. 390px 에서 네 칸이 한 줄에 들어가고(넘치면 줄바꿈),
+     누르면 카드 미니차트가 그 기간 종가로 곱게 다시 그려진다. */
+  function sparkRangeRow() {
+    return '<div class="mkt-tabs mini" id="sparkranges" role="group" aria-label="지수 미니 차트 기간" style="margin:2px 0 10px">' +
+      SPARK_RANGES.map(function (r) {
+        var on = st.sparkRange === r[0];
+        return '<button class="tab' + (on ? ' on' : '') + '" data-spark-range="' + r[0] + '" type="button" aria-pressed="' +
+          on + '">' + r[1] + '</button>';
+      }).join('') + '</div>';
+  }
+  /* 안내 문구 — 고른 기간을 그대로 적는다(1년 고정 문구를 남기지 않는다). */
+  function sparkNote(market) {
+    var lbl = sparkLabelOf(st.sparkRange), n = sparkN(st.sparkRange);
+    var body = market === 'kr'
+      ? '국내 지수는 코스피·코스닥입니다(5분 갱신 값 · 지연될 수 있음).'
+      : '나스닥100·VIX는 실제 지수(^NDX·^VIX)입니다. S&P500·다우존스·러셀2000·반도체는 지수 값이 없어 ETF(SPY·DIA·IWM·SOXX)로 대신합니다(ETF 대체).';
+    return body + ' 선은 최근 ' + lbl + '(약 ' + n + '거래일) 일봉 종가입니다 — 카드를 누르면 같은 ' +
+      lbl + ' 캔들 차트가 열립니다.';
+  }
   var SPARK_GAP = 6.5;    // 그린 점 사이 간격(px) — 6px 안팎이면 좁은 카드에서도 선이 완만하다
   var SPARK_MIN_K = 12, SPARK_MAX_K = 60;   // 그리는 점 수의 아래·위 한도
 
@@ -418,6 +453,29 @@
     for (var i = 0; i < k - 1; i++) out.push(values[Math.round(i * (n - 1) / (k - 1))]);
     out.push(values[n - 1]);   // 마지막 점 = 지금 종가
     return out;
+  }
+
+  /* 종가 배열의 단순이동평균 — 값이 모자란 앞구간은 null(값을 지어내지 않는다).
+     미니 차트는 20일·200일선을 그린다(큰 차트의 기본 ON 과 같은 규칙, day|20·day|200 토글을 따른다). */
+  function maOver(values, n) {
+    var out = [], sum = 0;
+    for (var i = 0; i < values.length; i++) {
+      sum += values[i];
+      if (i >= n) sum -= values[i - n];
+      out.push(i >= n - 1 ? sum / n : null);
+    }
+    return out;
+  }
+
+  /* 미니 차트 이평선 범례 — 지금 켜 둔 선만 색 점과 함께 짧게 적는다(기본 20일·200일). */
+  function sparkMaLegend() {
+    var off = maOffObj();
+    var items = [20, 200].filter(function (p) { return !off['day|' + p]; });
+    if (!items.length) return '';
+    return '<div class="ma-legend mini" id="sparkma"><span class="lb">이평선</span>' +
+      items.map(function (p) {
+        return '<span class="mi"><i style="background:' + Candles.maColor(p) + '"></i>' + p + '일</span>';
+      }).join('') + '</div>';
   }
 
   function toneColor(tone) {
@@ -498,8 +556,17 @@
 
   function paintSpark(cv, sym, bars, market, basis) {
     var sp = sparkPoints(sym, bars, basis);
-    var pts = sp.pts.slice(-SPARK_N);
-    var closes = pts.map(function (p) { return p.c; });   // 1년 종가(자료). 카드의 숫자는 이 값 그대로다
+    var span = sparkN(st.sparkRange);
+    var pts = sp.pts.slice(-span);
+    var closes = pts.map(function (p) { return p.c; });   // 고른 기간 종가(자료). 카드의 숫자는 이 값 그대로다
+    /* 이평선 — 기간 종가만이 아니라 담아 둔 일봉 전체로 계산한 뒤 이 창의 끝부분만 쓴다
+       (1개월 창에서도 200일선이 값이 있는 구간부터 보인다). */
+    var allCloses = sp.pts.map(function (p) { return p.c; });
+    var offMa = maOffObj();
+    var maLines = [20, 200].filter(function (p) { return !offMa['day|' + p]; }).map(function (p) {
+      var line = maOver(allCloses, p);
+      return { p: p, vals: line.slice(line.length - closes.length), color: Candles.maColor(p) };
+    });
     var liveDot = sp.liveDot;
     var W = cv.clientWidth || (cv.parentNode && cv.parentNode.clientWidth) || 140, H = SPARK_H;
     var dpr = Math.min(2, w.devicePixelRatio || 1);
@@ -513,14 +580,17 @@
       return;
     }
     cv.style.display = 'block';
-    cv.setAttribute('data-points', String(closes.length));   // 시험이 봉 수를 읽는다(1년 = 252)
+    cv.setAttribute('data-period', st.sparkRange);        // 시험이 고른 기간을 읽는다
+    cv.setAttribute('data-points', String(closes.length));   // 시험이 봉 수를 읽는다(3개월 = 63)
     cv.setAttribute('data-range', String(closes.length ? pts[0].d + '~' + pts[pts.length - 1].d : ''));
     // 그리는 점 — 값은 그대로 두고 점만 줄인다(다운샘플). data-draw 는 시험이 읽는다.
+    //  1개월(21봉)·3개월(63봉)은 봉 수가 적어 카드 폭에 거의 다 들어간다 — 그때는 실제 종가를
+    //  그대로 찍고, 6개월·1년만 기존 완만 샘플링을 그대로 쓴다.
     var draw = sparkShape(closes, W);
     cv.setAttribute('data-draw', String(draw.length));
-    cv.__spark = { closes: closes, draw: draw };   // 시험이 그린 값·자료 값을 읽는다
+    cv.__spark = { closes: closes, draw: draw, period: st.sparkRange };   // 시험이 그린 값·자료 값을 읽는다
 
-    // 세로 눈금은 1년 종가 전체의 최소·최대로 잡는다 — 카드 숫자·큰 캔들과 같은 범위를 쓴다.
+    // 세로 눈금은 고른 기간 종가 전체의 최소·최대로 잡는다 — 카드 숫자·큰 캔들과 같은 범위를 쓴다.
     var lo = Math.min.apply(null, closes), hi = Math.max.apply(null, closes);
     if (hi <= lo) hi = lo + 1;
     var padT = 4, padB = 6, gh = H - padT - padB;
@@ -560,7 +630,24 @@
     });
     ctx.stroke();
 
-    // 4) 마지막 점 — 실제 마지막 종가(다운샘플의 끝도 실제 값에 붙여 둔다)
+    // 4) 이동평균선(20·200) — 종가 선(1.6px)보다 얇게(1.1px) 그어 구분한다. 색은 큰 차트와 같다.
+    var xa = function (i) { return (i / Math.max(1, closes.length - 1)) * (W - 3) + 1.5; };
+    maLines.forEach(function (m) {
+      ctx.strokeStyle = m.color;
+      ctx.lineWidth = 1.1;
+      ctx.lineJoin = 'round';
+      ctx.beginPath();
+      var started = false;
+      for (var i = 0; i < m.vals.length; i++) {
+        var v = m.vals[i];
+        if (v == null || isNaN(v)) continue;
+        var px3 = xa(i), py3 = yf(v);
+        if (!started) { ctx.moveTo(px3, py3); started = true; } else ctx.lineTo(px3, py3);
+      }
+      if (started) ctx.stroke();
+    });
+
+    // 5) 마지막 점 — 실제 마지막 종가(다운샘플의 끝도 실제 값에 붙여 둔다)
     var lx = xf(draw.length - 1), ly = yf(draw[draw.length - 1]);
     ctx.fillStyle = col;
     ctx.beginPath(); ctx.arc(lx, ly, 2.6, 0, Math.PI * 2); ctx.fill();
@@ -817,6 +904,8 @@
   function bindHomeRows(view) {
     view.querySelectorAll('[data-candles]').forEach(function (b) {
       b.addEventListener('click', function () {
+        // 미니 차트에서 고른 기간으로 큰 캔들 차트를 연다(같은 구간·같은 모양).
+        st.range = st.sparkRange;
         location.hash = '#/market/candles/' + encodeURIComponent(b.getAttribute('data-candles'));
       });
     });
@@ -828,6 +917,26 @@
     view.querySelectorAll('[data-stock]').forEach(function (b) {
       b.addEventListener('click', function () {
         location.hash = '#/market/stock/' + encodeURIComponent(b.getAttribute('data-stock'));
+      });
+    });
+  }
+
+  /* 미니 차트 기간 전환 — 화면을 다시 그리지 않고 카드 캔버스만 그 기간으로 다시 칠한다
+     (카드를 누르면 그 기간으로 큰 차트가 열린다). */
+  function bindSparkRanges(view, market, basis) {
+    view.querySelectorAll('[data-spark-range]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        var k = b.getAttribute('data-spark-range');
+        if (k === st.sparkRange) return;
+        st.sparkRange = k;
+        view.querySelectorAll('[data-spark-range]').forEach(function (x) {
+          var on = x === b;
+          x.classList.toggle('on', on);
+          x.setAttribute('aria-pressed', on);
+        });
+        var note = view.querySelector('#sparknote');
+        if (note) note.textContent = sparkNote(market);
+        drawSparks(view, market, basis);
       });
     });
   }
@@ -1083,7 +1192,10 @@
 
   function maOffObj() {
     var o = {};
-    String(st.maOff || '').split(',').forEach(function (k) { if (k) o[k] = 1; });
+    var src = (st.maOff == null)
+      ? ((w.Candles && Candles.defaultOff) ? Candles.defaultOff().join(',') : '')
+      : String(st.maOff);
+    src.split(',').forEach(function (k) { if (k) o[k] = 1; });
     return o;
   }
 
@@ -1097,7 +1209,7 @@
     });
   }
 
-  /* 기간 줄 — 6개월·1년·5년. 5년은 봉이 저으므로 주봉을 기본으로 보여 준다(이미 있는 Candles 모듈 사용). */
+  /* 기간 줄 — 1개월·3개월·6개월·1년·5년(기본 3개월). 5년은 봉이 저으므로 주봉을 기본으로 보여 준다(이미 있는 Candles 모듈 사용). */
   function rangeRow() {
     return '<div class="mkt-tabs mini" id="cranges" style="margin-top:6px">' +
       RANGES.map(function (r) {
@@ -1113,7 +1225,9 @@
         if (k === st.range) return;
         st.range = k;
         var span = currentSpan(view);
+        /* 5년은 주봉, 그 밖의 기간은 일봉 — 5년을 보다가 3개월로 돌아오면 주봉 14봉이 남지 않게 한다. */
         if (k === '5y' && span === 'day') { span = 'week'; markSpan(view, 'week'); }
+        else if (k !== '5y' && span === 'week') { span = 'day'; markSpan(view, 'day'); }
         view.querySelectorAll('[data-range]').forEach(function (x) {
           var on = x === b;
           x.classList.toggle('on', on);
@@ -1125,7 +1239,7 @@
   }
 
   /* 기간을 달력 개월로 자른다 — 주봉·월봉은 봉 하나가 여러 거래일이라 봉 수로 자르면 기간이 어긋난다. */
-  var RANGE_MONTHS = { '6m': 6, '1y': 12, '5y': 60 };
+  var RANGE_MONTHS = { '1m': 1, '3m': 3, '6m': 6, '1y': 12, '5y': 60 };
   function untilMonths(bars, months) {
     if (!bars || !bars.length) return [];
     var last = new Date(bars[bars.length - 1][0] + 'T00:00:00Z');
@@ -1149,7 +1263,7 @@
        5년 기간 탭이 일봉 1년에서 잘려 보이지 않게. 주봉을 다시 묶어도(월·연봉) 같은 규칙이다. */
     var wk = (Candles.weeklyOf && Candles.weeklyOf(sym)) || null;
     var all = (spanKey !== 'day' && wk && wk.length) ? wk : all0;
-    // 기간(6개월·1년·5년) — 일봉은 거래일 수로, 주봉은 달력 개월로 자른다.
+    // 기간(1개월·3개월·6개월·1년·5년) — 일봉은 거래일 수로, 주봉은 달력 개월로 자른다.
     var n = rangeN(st.range);
     var picked = (all === wk) ? untilMonths(all, RANGE_MONTHS[st.range])
       : (all.length > n ? all.slice(all.length - n) : all);
@@ -1164,21 +1278,41 @@
       if (leg0) leg0.innerHTML = '';
       return;
     }
-    var res = Candles.draw(box, { bars: picked, span: spanKey, market: q.market, maOff: maOff, height: 260, cur: cur, window: 0 });
+    /* 이동평균은 자르기 전 봉(maBars)까지 계산한다 — 1개월 창에서도 200일선이 값이 있는 구간부터 그려진다. */
+    var res = Candles.draw(box, { bars: picked, span: spanKey, market: q.market, maOff: maOff,
+      height: 260, cur: cur, window: 0, maBars: all });
+    /* 켜 둔 이동평균만 적고, 200선은 자료가 200봉에 못 미치는 앞구간이 있다는 사실을 한 줄로 밝힌다. */
+    var fullN = Candles.fold(all, spanKey).length;
+    var onList = sp.ma.filter(function (p) { return !maOff[sp.key + '|' + p]; });
+    var maTxt = onList.length
+      ? '이동평균선 ' + onList.join('/') + sp.unit + ' 켜짐(아래 칩으로 끄고 켬)'
+      : '이동평균선 모두 꺼짐(아래 칩으로 켬)';
+    var maLong = '';
+    if (sp.ma.indexOf(200) >= 0 && !maOff[sp.key + '|200']) {
+      if (fullN >= 200) {
+        var have = fullN - 199;
+        maLong = spanKey === 'day'
+          ? ' · 일봉 1년(' + fullN + '봉) 자료라 200일선은 최근 ' + have + '거래일(약 ' + (have / 21).toFixed(1) + '개월) 구간부터 표시합니다'
+          : ' · ' + sp.label + ' ' + fullN + '봉 자료라 200' + sp.unit + '선은 최근 ' + have + sp.unit + ' 구간부터 표시합니다';
+      } else {
+        maLong = ' · 200' + sp.unit + '선은 봉이 모자라(' + fullN + '봉) 그리지 않습니다. 값을 지어내지 않습니다.';
+      }
+    }
     if (note) {
       note.textContent = (barsSrc === 'live' ? '5분 갱신이 받아 둔 최근 ' + all.length + '일 일봉입니다(봉 파일에 없는 종목). ' : '') +
         res.bars.length + '개 ' + sp.label + ' · ' + rangeLabel(st.range) + ' 구간 · ' + (use.ok ? '' :
         '이 봉 단위는 자료가 ' + use.count + '개뿐입니다(약 ' + (sp.need) + '개 필요). 봉을 지어내지 않습니다. ') +
-        '이동평균선 ' + sp.ma.join('/') + ' ' + sp.unit +
+        maTxt + maLong +
         // 일봉은 최근 1년치만 담는다 — 5년을 고른 채 일봉을 보면 그 사실을 적는다(지어내지 않는다).
         (spanKey === 'day' && st.range === '5y' ? ' · 일봉은 최근 1년치(약 252거래일)만 담습니다 — 5년은 주봉으로 보세요.' : '');
     }
     var leg = view.querySelector('#maleg');
     if (leg) {
-      leg.innerHTML = sp.ma.map(function (p, i) {
+      leg.innerHTML = sp.ma.map(function (p) {
         var off = maOff[sp.key + '|' + p];
-        return '<button type="button" data-ma="' + p + '" class="' + (off ? 'off' : '') + '">' +
-          '<span style="color:' + ['#8FBEDC', '#dcb05f', '#a294e0', '#6fcf97'][i % 4] + '">●</span> ' + p + sp.unit + '</button>';
+        return '<button type="button" data-ma="' + p + '" class="' + (off ? 'off' : '') + '"' +
+          ' aria-pressed="' + (off ? 'false' : 'true') + '" title="' + p + sp.unit + '선 ' + (off ? '켜기' : '끄기') + '">' +
+          '<span style="color:' + Candles.maColor(p) + '">●</span> ' + p + sp.unit + '</button>';
       }).join('');
       leg.querySelectorAll('[data-ma]').forEach(function (b) {
         b.addEventListener('click', function () {
@@ -1187,7 +1321,7 @@
           var o = maOffObj();
           if (o[key]) delete o[key]; else o[key] = 1;
           st.maOff = Object.keys(o).join(',');
-          localStorage.setItem('stockrebal.mkt.maoff', st.maOff);
+          localStorage.setItem('stockrebal.mkt.maoff2', st.maOff);
           renderChart(sym, q, all, spanKey, o);
         });
       });
@@ -1210,7 +1344,7 @@
     h += '<div class="chart-box" id="cbox" data-sym="' + esc(sym) + '" style="margin-top:8px"><canvas></canvas></div>' +
       '<div class="chart-readout note" style="margin-top:6px">차트를 짚으면 그 봉의 값이 나옵니다.</div>' +
       '<div class="ma-legend" id="maleg"></div><div class="note" id="cnote"></div>' +
-      '<div class="note">봉은 야후 일봉 최근 1년(약 252거래일)과 주봉 5년입니다. 월·연봉은 브라우저가 같은 규칙으로 묶고, 5년 기간 탭은 주봉으로 그립니다. 이동평균선은 그 봉 단위의 종가로 계산합니다.</div></section>';
+      '<div class="note">봉은 야후 일봉 최근 1년(약 252거래일)과 주봉 5년입니다. 월·연봉은 브라우저가 같은 규칙으로 묶고, 5년 기간 탭은 주봉으로 그립니다. 이동평균선은 그 봉 단위의 종가로 계산합니다. 기간 기본값은 3개월입니다.</div></section>';
     view.innerHTML = h;
     bindTop(view, false);
     var q = { cur: market === 'kr' ? 'KRW' : 'USD', market: market };

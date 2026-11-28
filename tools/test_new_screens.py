@@ -61,6 +61,14 @@ def main():
         check('증시: 마켓맵 캔버스', pg.locator('#mapbox canvas').count() == 1)
         check('증시: 순위 표', pg.locator('table.mkt').count() >= 2)
         check('증시: 관심 종목 기본값(TQQQ)', 'TQQQ' in pg.inner_text('body'))
+        # 지수 미니 차트 기간 전환 — 1개월·3개월·6개월·1년, 기본 3개월
+        srg = pg.evaluate("""(()=>({b:[...document.querySelectorAll('[data-spark-range]')].map(x=>x.textContent.trim()),
+            on:(document.querySelector('[data-spark-range].on')||{}).textContent,
+            pts:Number((document.querySelector('canvas.spark')||{getAttribute:()=>0}).getAttribute('data-points')||0),
+            legend:(document.querySelector('#sparkma')||{}).textContent||''}))()""")
+        check('증시: 미니 차트 기간 1개월·3개월·6개월·1년', srg['b'] == ['1개월', '3개월', '6개월', '1년'], str(srg['b']))
+        check('증시: 미니 차트 기본 3개월(63봉)', srg['on'] == '3개월' and 62 <= srg['pts'] <= 64, str(srg['pts']))
+        check('증시: 미니 차트 이평선 범례(20일·200일)', '20일' in srg['legend'] and '200일' in srg['legend'], srg['legend'].replace('\n', ' '))
 
         px_color = pg.evaluate("getComputedStyle(document.querySelector('.px')).color")
         check('가격 연두색(#3DD68C)', px_color.replace(' ', '') in ('rgb(61,214,140)',), px_color)
@@ -71,6 +79,18 @@ def main():
         check('지수 → 캔들 화면', 'chart-box' in pg.inner_html('body') and '#/market/candles/' in pg.url, pg.url)
         canvas_has = pg.evaluate("(()=>{const c=document.querySelector('#cbox canvas');if(!c)return 0;const x=c.getContext('2d');const d=x.getImageData(0,0,c.width,c.height).data;let n=0;for(let i=3;i<d.length;i+=4){if(d[i]>0)n++;}return n;})()")
         check('캔들 차트 실제 픽셀', canvas_has > 500, str(canvas_has))
+        # 캔들 차트 기본값 — 기간 3개월·이평선 20/200 켜짐
+        cm = pg.evaluate("""(()=>({bars:(document.querySelector('#cbox').__bars||[]).length,
+            range:(document.querySelector('[data-range].on')||{}).textContent,
+            ma:[...document.querySelectorAll('#maleg button')].map(b=>(b.textContent.trim())+':'+(b.className||''))}))()""")
+        check('캔들: 기본 기간 3개월(63봉)', cm['range'] == '3개월' and cm['bars'] == 63, '%s %s' % (cm['range'], cm['bars']))
+        check('캔들: 이평선 칩 5·20·60·120·200', len(cm['ma']) == 5, str(cm['ma']))
+        check('캔들: 기본 20·200 켜짐 / 5·60·120 꺼짐',
+              all('off' not in x for x in cm['ma'] if x.startswith(('● 20', '● 200'))) and
+              all('off' in x for x in cm['ma'] if x.startswith(('● 5', '● 60', '● 120'))), str(cm['ma']))
+        gold = pg.evaluate("""(()=>{const c=document.querySelector('#cbox canvas');const d=c.getContext('2d').getImageData(0,0,c.width,c.height).data;
+            let g=0,s=0;for(let i=0;i<d.length;i+=4){if(d[i]===220&&d[i+1]===176&&d[i+2]===95)g++; if(d[i]===143&&d[i+1]===190&&d[i+2]===220)s++;}return {g,s};})()""")
+        check('캔들: 20일선(금)·200일선(하늘)이 그려짐', gold['g'] > 200 and gold['s'] > 200, str(gold))
         # 봉 단위 전환
         pg.locator('[data-cspan="week"]').click()
         pg.wait_for_timeout(600)

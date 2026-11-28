@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
-"""지수 카드 미니차트(1년·면 채움·다운샘플)·나스닥100 실제 지수·마켓맵 상승/하락 색 검증.
+"""지수 카드 미니차트(기간 1개월·3개월·6개월·1년, 기본 3개월·면 채움·다운샘플)·나스닥100 실제 지수·마켓맵 상승/하락 색 검증.
 
   LD_LIBRARY_PATH=/workspace/site-stock-rel/.libs python3 tools/test_spark_colors.py
 
 확인하는 것
   1) '주요 지수' 첫 칸이 나스닥100(^NDX) 실제 지수이고 값·등락이 live.json 의 정규장 값과 같다
      (QQQ 칸은 이름이 'QQQ' 이고 'ETF 대체' 표기가 남는다)
-  2) 카드 클릭(카드·미니차트 캔버스 둘 다) → 큰 차트(#/market/candles/^NDX), 기본 기간 일봉 1년,
-     기간 6개월/1년/5년 전환(5년은 주봉)
-  3) 미니차트는 최근 252봉(1년) 종가를 그리되 그리는 점을 줄여(다운샘플, data-draw) 꼬불거리지 않게 하고,
+  2) 미니차트 기간 전환 — 1개월·3개월·6개월·1년 네 칸, 기본 3개월(약 63봉). 누르면 그 기간 종가로
+     다시 그려지고(봉 수·기간 표기·안내 문구가 바뀐다) 카드 클릭 → 큰 차트도 같은 기간으로 열린다
+  3) 큰 차트 기간 1개월·3개월·6개월·1년·5년, 기본 3개월(63봉). 5년은 주봉
+  4) 미니차트는 고른 기간 종가를 그리되 6개월·1년은 그리는 점을 줄여(다운샘플, data-draw) 꼬불거리지 않게 하고,
      그린 값은 실제 종가이고 큰 차트와 같은 구간·같은 흐름이며, 선 색이 위 등락 색과 같다
-  4) 마켓맵 — 보이는 칸의 최대 등락률을 눈금으로 한 상대 색, 0%만 회색, 0이 아닌 칸은 최소 세기 이상.
+  5) 마켓맵 — 보이는 칸의 최대 등락률을 눈금으로 한 상대 색, 0%만 회색, 0이 아닌 칸은 최소 세기 이상.
      390px·1280px 에서 모든 칸이 최소 크기(한 변 46px) 이상인지 실제 치수로 잰다
-  5) 390px 가로 넘침 0, 콘솔 오류 0
+  6) 390px 가로 넘침 0, 콘솔 오류 0
 """
 import functools
 import http.server
@@ -82,6 +83,7 @@ def main():
                     c:c.querySelector('.c').textContent.trim(),
                     f:c.querySelector('.f').textContent.trim(),
                     sym:cv.getAttribute('data-spark'),
+                    period:cv.getAttribute('data-period'),
                     pts:Number(cv.getAttribute('data-points')||0),
                     draw:Number(cv.getAttribute('data-draw')||0),
                     h:cv.clientHeight, disp:cv.style.display,
@@ -95,7 +97,7 @@ def main():
         check('나스닥100 등락 = ^NDX 정규장 등락', want_chg in first.get('c', '').replace('▲ ', '').replace('▼ ', ''),
               (first.get('c'), want_chg))
         check('나스닥100 카드가 자기 차트를 가진다', first.get('sym') == '^NDX' and first.get('disp') == 'block'
-              and first.get('pts', 0) >= 250, first)
+              and 62 <= first.get('pts', 0) <= 64 and first.get('period') == '3m', first)
         qqq = [c for c in cards if c['sym'] == 'QQQ']
         check('QQQ 칸 이름이 QQQ + ETF 대체', qqq and qqq[0]['n'].startswith('QQQ') and 'ETF 대체' in qqq[0]['n'],
               qqq[0]['n'] if qqq else None)
@@ -103,14 +105,84 @@ def main():
               [(c['n'], c['pts']) for c in cards if c['disp'] != 'block' or c['pts'] < 2])
         check('미니차트 높이 40px', all(c['h'] == 40 for c in cards), sorted({c['h'] for c in cards}))
 
-        # 1년 = 최근 252봉(+오늘 값 1개까지)
-        pts = [c['pts'] for c in cards]
-        check('미니차트 = 1년(252봉 안팎)', all(250 <= n <= 253 for n in pts), pts)
+        # 기간 전환 네 칸 — 기본 3개월
+        rg = pg.evaluate("""(()=>({btns:[...document.querySelectorAll('[data-spark-range]')].map(b=>b.textContent.trim()),
+            on:(document.querySelector('[data-spark-range].on')||{}).textContent,
+            note:(document.querySelector('#sparknote')||{}).textContent||''}))()""")
+        check('미니차트 기간 칸 = 1개월·3개월·6개월·1년', rg['btns'] == ['1개월', '3개월', '6개월', '1년'], rg['btns'])
+        check('미니차트 기본 기간 = 3개월', rg['on'] == '3개월', rg['on'])
+        check('안내 문구도 3개월', '최근 3개월' in rg['note'] and '같은 3개월' in rg['note'], rg['note'][-60:])
 
-        # 그리는 점은 줄인다 — 1년 봉을 다 찍으면 좁은 카드에서 지렁이처럼 꼬불거린다
+        # 3개월 = 최근 63봉(+오늘 값 1개까지)
+        pts = [c['pts'] for c in cards]
+        check('미니차트 = 3개월(63봉 안팎)', all(62 <= n <= 64 for n in pts), pts)
+        check('카드 캔버스가 기간(3m)을 적는다', all(c['period'] == '3m' for c in cards),
+              sorted({c['period'] for c in cards}))
+
+        # 그리는 점 — 3개월은 카드 폭에 거의 다 들어가는 만큼 실제 종가를 그대로 찍는다
         draws = [c['draw'] for c in cards]
-        check('미니차트는 그리는 점을 줄인다(넓은 카드 20~30점 안팎)', all(20 <= n <= 62 for n in draws), draws)
-        check('그리는 점이 자료 봉 수보다 훨씬 적다', all(d <= p / 4 for d, p in zip(draws, pts)), list(zip(draws, pts))[:3])
+        check('미니차트 그리는 점(3개월·넓은 카드 40~63점)', all(40 <= n <= 64 for n in draws), draws)
+
+        # 미니 차트 이평선 — 기본 20일·200일, 범례와 실제로 그려진 색(금색 #dcb05f · 하늘색 #8FBEDC)
+        ma_leg = pg.inner_text('#sparkma') if pg.locator('#sparkma').count() else ''
+        check('미니차트 이평선 범례(20일·200일)', '20일' in ma_leg and '200일' in ma_leg, ma_leg.replace('\n', ' '))
+        ma_px = pg.evaluate("""(()=>{const out=[];document.querySelectorAll('.idx-cell').forEach(c=>{
+            const cv=c.querySelector('canvas');
+            const d=cv.getContext('2d').getImageData(0,0,cv.width,cv.height).data;
+            let g=0,s=0;for(let i=0;i<d.length;i+=4){
+              if(d[i]===220&&d[i+1]===176&&d[i+2]===95)g++;
+              if(d[i]===143&&d[i+1]===190&&d[i+2]===220)s++;}
+            out.push({n:c.querySelector('.n').textContent.trim().split('\\n')[0],g:g,s:s});});return out;})()""")
+        check('미니차트에 20일선(금색)이 그려짐', all(x['g'] >= 20 for x in ma_px),
+              [(x['n'], x['g']) for x in ma_px])
+        check('미니차트에 200일선(하늘색)이 그려짐', all(x['s'] >= 20 for x in ma_px),
+              [(x['n'], x['s']) for x in ma_px])
+
+        def spark_state():
+            return pg.evaluate("""(()=>[...document.querySelectorAll('.idx-cell')].map(c=>{
+                const cv=c.querySelector('canvas');
+                return {name:c.querySelector('.n').textContent.trim().split('\\n')[0],
+                        period:cv.getAttribute('data-period'),
+                        pts:Number(cv.getAttribute('data-points')||0),
+                        draw:Number(cv.getAttribute('data-draw')||0),
+                        range:cv.getAttribute('data-range')||''};}))()""")
+
+        # 1개월 = 21봉
+        pg.click('[data-spark-range="1m"]')
+        pg.wait_for_timeout(700)
+        s1m = spark_state()
+        check('1개월 → 21봉', all(20 <= x['pts'] <= 22 for x in s1m), [(x['name'], x['pts']) for x in s1m])
+        check('1개월 → 카드가 기간(1m)을 적는다', all(x['period'] == '1m' for x in s1m),
+              sorted({x['period'] for x in s1m}))
+        note1 = pg.inner_text('#sparknote')
+        check('1개월 → 안내 문구도 1개월', '최근 1개월' in note1 and '같은 1개월' in note1, note1[-60:])
+        check('1개월 → 그리는 점이 봉 수와 같다(실제 종가)', all(x['draw'] == x['pts'] for x in s1m),
+              [(x['name'], x['draw'], x['pts']) for x in s1m])
+        ma_1m = pg.evaluate("""(()=>{const out=[];document.querySelectorAll('.idx-cell').forEach(c=>{
+            const cv=c.querySelector('canvas');
+            const d=cv.getContext('2d').getImageData(0,0,cv.width,cv.height).data;
+            let g=0,s=0;for(let i=0;i<d.length;i+=4){
+              if(d[i]===220&&d[i+1]===176&&d[i+2]===95)g++;
+              if(d[i]===143&&d[i+1]===190&&d[i+2]===220)s++;}
+            out.push({n:c.querySelector('.n').textContent.trim().split('\\n')[0],g:g,s:s});});return out;})()""")
+        check('1개월 창에서도 20·200일선이 그려진다', all(x['g'] >= 10 and x['s'] >= 10 for x in ma_1m),
+              [(x['n'], x['g'], x['s']) for x in ma_1m])
+
+        # 6개월 = 126봉
+        pg.click('[data-spark-range="6m"]')
+        pg.wait_for_timeout(700)
+        s6m = spark_state()
+        check('6개월 → 126봉', all(125 <= x['pts'] <= 127 for x in s6m), [(x['name'], x['pts']) for x in s6m])
+        check('6개월은 그리는 점을 줄인다', all(x['draw'] < x['pts'] / 2 for x in s6m),
+              [(x['name'], x['draw'], x['pts']) for x in s6m])
+
+        # 1년 = 252봉 — 기존 완만 샘플링 유지
+        pg.click('[data-spark-range="1y"]')
+        pg.wait_for_timeout(700)
+        s1y = spark_state()
+        check('1년 → 252봉 안팎', all(250 <= x['pts'] <= 253 for x in s1y), [(x['name'], x['pts']) for x in s1y])
+        check('1년은 그리는 점을 크게 줄인다(60점 이하)', all(12 <= x['draw'] <= 62 for x in s1y),
+              [(x['name'], x['draw']) for x in s1y])
 
         # 증시 탭 첫 화면은 지수 봉만 담은 작은 파일만 받는다(종목 봉 큰 파일은 상세를 열 때만).
         check('첫 화면이 지수 봉 파일을 받는다', any(u.endswith('data/candles-index.json') for u in pulled), pulled[-4:])
@@ -118,7 +190,7 @@ def main():
               not any(u.split('?')[0].endswith('/data/candles.json') for u in pulled),
               [u for u in pulled if 'candles' in u])
 
-        # 면 채움 + 선 색 = 등락 색
+        # 면 채움 + 선 색 = 등락 색 (지금은 1년으로 그려 둔 상태)
         # 선 색 = 등락 색, 그린 값은 실제 종가, 큰 차트와 같은 구간·같은 흐름
         shape = pg.evaluate("""(()=>{const out=[];document.querySelectorAll('.idx-cell').forEach(c=>{
             const cv=c.querySelector('canvas');const s=cv.__spark||{closes:[],draw:[]};
@@ -177,41 +249,102 @@ def main():
               [(x['name'], x['r'], x['g']) for x in redded])
         pg.screenshot(path=os.path.join(SHOTS, 'test-idx-1280.png'))
 
-        # ---------------------------------------------------------- ② 카드 → 큰 차트(미니차트 캔버스를 직접 눌러도)
+        # ---------------------------------------------------------- ② 카드 → 큰 차트(미니에서 고른 기간 그대로)
         pg.locator('.idx-cell canvas').first.click(position={'x': 24, 'y': 16})
         pg.wait_for_timeout(2000)
         check('미니차트 캔버스 클릭 → 캔들 화면', '#/market/candles/%5ENDX' in pg.url or '#/market/candles/^NDX' in pg.url, pg.url)
+        m1y = pg.evaluate("""(()=>({bars:(document.querySelector('#cbox').__bars||[]).length,
+            range:(document.querySelector('[data-range].on')||{}).textContent,
+            span:(document.querySelector('[data-cspan].on')||{}).textContent}))()""")
+        check('미니 1년 → 큰 차트도 1년 252봉', m1y['bars'] == 252 and m1y['range'] == '1년', m1y)
         pg.go_back()
         pg.wait_for_timeout(1800)
         check('뒤로 → 증시 홈(미니차트 살아 있음)',
               pg.evaluate("()=>document.querySelectorAll('canvas.spark[data-draw]').length") >= 7)
 
-        # ---------------------------------------------------------- ② 큰 차트
+        # 1개월을 고른 뒤 카드를 누르면 큰 차트도 1개월로 열린다
+        pg.click('[data-spark-range="1m"]')
+        pg.wait_for_timeout(700)
+        pg.locator('.idx-cell').first.click()
+        pg.wait_for_timeout(2000)
+        m1m = pg.evaluate("""(()=>({bars:(document.querySelector('#cbox').__bars||[]).length,
+            range:(document.querySelector('[data-range].on')||{}).textContent,
+            span:(document.querySelector('[data-cspan].on')||{}).textContent}))()""")
+        check('카드 클릭 → 큰 차트 같은 기간(1개월 21봉)', m1m['bars'] == 21 and m1m['range'] == '1개월', m1m)
+
+        # ---------------------------------------------------------- ② 큰 차트 기본값·기간 탭
+        pg.goto(base + 'index.html#/market')
+        pg.reload()                      # 모듈 상태(고른 기간)를 기본값으로 되돌린다
+        pg.wait_for_timeout(2400)
         pg.locator('.idx-cell').first.click()
         pg.wait_for_timeout(2000)
         check('카드 클릭 → 큰 차트', '#/market/candles/%5ENDX' in pg.url or '#/market/candles/^NDX' in pg.url, pg.url)
         spans = pg.evaluate("""(()=>{const box=document.querySelector('#cbox');
             return {bars:(box&&box.__bars||[]).length,
                     ranges:[...document.querySelectorAll('[data-range]')].map(x=>x.textContent),
+                    range:(document.querySelector('[data-range].on')||{}).textContent,
                     span:(document.querySelector('[data-cspan].on')||{}).textContent,
                     note:(document.querySelector('#cnote')||{}).textContent};})()""")
-        check('기간 버튼 6개월·1년·5년', spans['ranges'] == ['6개월', '1년', '5년'], spans['ranges'])
-        check('기본 = 일봉 1년 252봉', spans['bars'] == 252 and '1년' in (spans['note'] or ''), (spans['bars'], spans['note']))
-        pg.query_selector('#cbox').screenshot(path=os.path.join(SHOTS, 'test-chart-6m.png'))
+        check('기간 버튼 1개월·3개월·6개월·1년·5년', spans['ranges'] == ['1개월', '3개월', '6개월', '1년', '5년'], spans['ranges'])
+        check('기본 = 일봉 3개월 63봉', spans['bars'] == 63 and spans['range'] == '3개월' and '3개월' in (spans['note'] or ''),
+              (spans['bars'], spans['range'], spans['note']))
+        pg.query_selector('#cbox').screenshot(path=os.path.join(SHOTS, 'test-chart-3m.png'))
+        pg.click('[data-range="1m"]')
+        pg.wait_for_timeout(700)
+        s1 = pg.evaluate("()=>((document.querySelector('#cbox').__bars||[]).length)")
+        check('1개월 = 21봉(일봉)', s1 == 21, s1)
         pg.click('[data-range="6m"]')
         pg.wait_for_timeout(700)
         s6 = pg.evaluate("()=>((document.querySelector('#cbox').__bars||[]).length)")
         check('6개월 = 126봉(일봉)', s6 == 126, s6)
         pg.click('[data-range="1y"]')
         pg.wait_for_timeout(700)
-        s1 = pg.evaluate("()=>((document.querySelector('#cbox').__bars||[]).length)")
-        check('1년 = 252봉(일봉)', s1 == 252, s1)
+        s1y2 = pg.evaluate("()=>((document.querySelector('#cbox').__bars||[]).length)")
+        check('1년 = 252봉(일봉)', s1y2 == 252, s1y2)
         pg.click('[data-range="5y"]')
         pg.wait_for_timeout(700)
         s5 = pg.evaluate("""(()=>({n:(document.querySelector('#cbox').__bars||[]).length,
             span:(document.querySelector('[data-cspan].on')||{}).textContent}))()""")
         check('5년 = 주봉(260봉 안팎)', s5['span'] == '주봉' and 250 <= s5['n'] <= 270, s5)
         pg.query_selector('#cbox').screenshot(path=os.path.join(SHOTS, 'test-chart-5y.png'))
+
+        # ---------------------------------------------------------- ②-2 이평선 — 기본 20·200 켜짐, 5·60·120 꺼짐
+        pg.goto(base + 'index.html#/market')
+        pg.reload()
+        pg.wait_for_timeout(2400)
+        pg.locator('.idx-cell').first.click()
+        pg.wait_for_timeout(2200)
+        ma = pg.evaluate("""(()=>({chips:[...document.querySelectorAll('#maleg button')].map(b=>b.textContent.trim()),
+            on:[...document.querySelectorAll('#maleg button:not(.off)')].map(b=>b.textContent.trim()),
+            note:(document.querySelector('#cnote')||{}).textContent}))()""")
+        check('이평선 칩 5개(5·20·60·120·200)', len(ma['chips']) == 5, ma['chips'])
+        check('이평선 기본 켜짐 = 20일·200일', sorted(ma['on']) == ['● 200일', '● 20일'], ma['on'])
+        check('200일선 안내 문구(최근 53거래일·약 2.5개월)',
+              '200일선은 최근 53거래일(약 2.5개월) 구간부터' in (ma['note'] or ''), ma['note'])
+        px = pg.evaluate("""(()=>{const c=document.querySelector('#cbox canvas');
+            const d=c.getContext('2d').getImageData(0,0,c.width,c.height).data;
+            let g=0,s=0;for(let i=0;i<d.length;i+=4){
+              if(d[i]===220&&d[i+1]===176&&d[i+2]===95)g++;
+              if(d[i]===143&&d[i+1]===190&&d[i+2]===220)s++;}return {g:g,s:s};})()""")
+        check('큰 차트에 20일선·200일선이 그려짐', px['g'] > 200 and px['s'] > 200, px)
+
+        # 토글 — 5일선 켜고, 20일선 끈다(바로 반영·저장)
+        pg.click('#maleg [data-ma="5"]')
+        pg.wait_for_timeout(400)
+        pg.click('#maleg [data-ma="20"]')
+        pg.wait_for_timeout(400)
+        tg = pg.evaluate("""(()=>({on:[...document.querySelectorAll('#maleg button:not(.off)')].map(b=>b.textContent.trim()),
+            note:(document.querySelector('#cnote')||{}).textContent,
+            saved:localStorage.getItem('stockrebal.mkt.maoff2')}))()""")
+        check('토글: 5일선 켜짐·20일선 꺼짐', '● 5일' in tg['on'] and '● 20일' not in tg['on'], tg['on'])
+        check('토글: 안내 문구도 켜진 선만 적는다', '이동평균선 5/200일' in (tg['note'] or ''), tg['note'])
+        check('토글: 저장값에 20일 꺼짐이 들어간다', 'day|20' in (tg['saved'] or ''), tg['saved'])
+        pg.query_selector('#cbox').screenshot(path=os.path.join(SHOTS, 'test-chart-ma-toggle.png'))
+        pg.reload()
+        pg.wait_for_timeout(2200)
+        keep = pg.evaluate("[...document.querySelectorAll('#maleg button:not(.off)')].map(b=>b.textContent.trim())")
+        check('새로 열어도 끄고 켠 상태 유지(5 켜짐·20 꺼짐)', '● 5일' in keep and '● 20일' not in keep, keep)
+        pg.evaluate("localStorage.removeItem('stockrebal.mkt.maoff2')")   # 뒤 시험은 기본값으로 본다
         cndx = candles.get('symbols', {}).get('^NDX') or []
         wndx = candles.get('weekly', {}).get('^NDX') or []
         check('candles-index.json에 ^NDX 일봉 1년', len(cndx) == 252, len(cndx))
@@ -314,12 +447,24 @@ def main():
                     disp:cv.style.display};}))()""")
         check('390: 카드 폭 170px 미만', all(x['w'] < 170 for x in small_cards),
               sorted({x['w'] for x in small_cards}))
-        check('390: 미니차트 1년(252봉) 유지', all(x['pts'] >= 250 and x['disp'] == 'block' for x in small_cards),
+        check('390: 미니차트 3개월(63봉) 유지', all(62 <= x['pts'] <= 64 and x['disp'] == 'block' for x in small_cards),
               [(x['name'], x['pts']) for x in small_cards])
         check('390: 그리는 점을 더 줄인다(24점 이하)', all(12 <= x['draw'] <= 24 for x in small_cards),
               [(x['name'], x['draw']) for x in small_cards])
-        check('390: 1280보다 점이 적다', all(x['draw'] < max(draws) for x in small_cards),
-              (sorted({x['draw'] for x in small_cards}), max(draws)))
+        check('390: 1280(52점)보다 점이 적다', all(x['draw'] < 40 for x in small_cards),
+              sorted({x['draw'] for x in small_cards}))
+        ma390 = pg.evaluate("""(()=>{const out=[];document.querySelectorAll('.idx-cell').forEach(c=>{
+            const cv=c.querySelector('canvas');
+            const d=cv.getContext('2d').getImageData(0,0,cv.width,cv.height).data;
+            let g=0,s=0;for(let i=0;i<d.length;i+=4){
+              if(d[i]===220&&d[i+1]===176&&d[i+2]===95)g++;
+              if(d[i]===143&&d[i+1]===190&&d[i+2]===220)s++;}
+            out.push({n:c.querySelector('.n').textContent.trim().split('\\n')[0],g:g,s:s});});return out;})()""")
+        # 390px 카드에서는 200일선이 그 기간 가격 범위 밖으로 나가면 화면 위·아래에서 잘린다(값을 지어내지 않음).
+        # 그때도 선이 걸친 픽셀은 남으므로 0이 아닌 것으로 본다.
+        check('390: 미니차트에 20·200일선이 그려진다', all(x['g'] >= 10 and x['s'] >= 4 for x in ma390),
+              [(x['n'], x['g'], x['s']) for x in ma390])
+        check('390: 이평선 범례가 한 줄에 있다', pg.locator('#sparkma').count() == 1 and '200일' in pg.inner_text('#sparkma'))
         ow = pg.evaluate('document.documentElement.scrollWidth - document.documentElement.clientWidth')
         check('390 증시 홈 가로 넘침 0', ow <= 1, ow)
         pg.locator('section.panel').first.screenshot(path=os.path.join(SHOTS, 'test-idx-390.png'))
@@ -332,7 +477,7 @@ def main():
         m = pg.evaluate("""(()=>({bars:(document.querySelector('#cbox').__bars||[]).length,
             range:(document.querySelector('[data-range].on')||{}).textContent,
             span:(document.querySelector('[data-cspan].on')||{}).textContent}))()""")
-        check('390: 캔들 화면도 기본 일봉 1년(252봉)', m['bars'] == 252 and m['range'] == '1년' and m['span'] == '일봉', m)
+        check('390: 캔들 화면도 기본 3개월(63봉)', m['bars'] == 63 and m['range'] == '3개월' and m['span'] == '일봉', m)
         pg.screenshot(path=os.path.join(SHOTS, 'test-candle-390.png'))
 
         print('\n콘솔 오류:', len(console), console[:3])

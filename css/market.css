@@ -163,6 +163,11 @@ table.mkt.fixed th.act,table.mkt.fixed td.act{width:96px}
 .chart-box{position:relative;width:100%;background:var(--sunken);border:1px solid var(--line);border-radius:10px}
 .chart-box canvas{width:100%;display:block;touch-action:manipulation}
 .ma-legend{display:flex;gap:10px;flex-wrap:wrap;font-size:10.5px;color:var(--tx2);margin-top:6px}
+/* 미니 차트 이평선 범례 — 색 점(가는 선)과 이름만 짧게. 지수 카드 아래 한 줄. */
+.ma-legend.mini{font-size:10px;gap:9px;margin:0 0 7px;align-items:center}
+.ma-legend.mini .lb{color:var(--dim)}
+.ma-legend.mini .mi{display:inline-flex;align-items:center;gap:4px;color:var(--tx2);white-space:nowrap}
+.ma-legend.mini .mi i{display:inline-block;width:11px;height:2px;border-radius:1px}
 .ma-legend button{background:none;border:none;color:inherit;font:inherit;cursor:pointer;padding:0}
 .ma-legend button.off{opacity:.35;text-decoration:line-through}
 
