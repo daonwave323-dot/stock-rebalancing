@@ -526,6 +526,10 @@ def main():
               head == ['사례', '그 사례와 닮은 날', '그날 낙폭', '지금 낙폭', '지표 거리', '그 뒤 30일', '그 뒤 90일'], head)
         rows = pg.evaluate("()=>[...document.querySelectorAll('#gNowMatch tbody tr')].map(tr=>({cls:tr.className, cells:[...tr.children].map(td=>td.innerText.replace(/\\n/g,' '))}))")
         check('사례 6 + 현재 1 = 7줄', len(rows) == 7, len(rows))
+        winbtns = pg.evaluate("()=>[...document.querySelectorAll('[data-ovwin]')].map(b=>b.textContent.trim())")
+        winon = pg.evaluate("()=>[...document.querySelectorAll('[data-ovwin].on')].map(b=>b.textContent.trim())")
+        check('겹쳐 보기 창 = 1개월·3개월·6개월·1년, 기본 3개월',
+              winbtns == ['1개월', '3개월', '6개월', '1년'] and winon == ['3개월'], (winbtns, winon))
         order = [r['cells'][0].split(' ')[1] if ' ' in r['cells'][0] else r['cells'][0] for r in rows]
         names = [r['cells'][0] for r in rows]
         check('시간 순 — 1929 → 1987 → 2000 → 2008 → 2020 → 2025 → 현재',

@@ -8,7 +8,7 @@
      그 아래 2단계 브레이크(SOX 고점 대비 낙폭·경과 개월·금리 경보)가 data/crashes_sox.json 값과 같게 나온다
   2) 90점을 넘겨도(수동 입력) 반도체는 '매수'가 아니라 '90점 돌파 · 경보'로 내려간다 — 나스닥은 그대로 '계획의 50% 투입'
   3) 희귀도·백테스트 표에 보고서 수치(24건·+8.68%·59.1%)와 재계산·필터 A·B 수치가 같이 있다
-  4) 폭락 비교가 SOX 8사례 + 현재로 바뀌고(유형 배지 업황 사이클/경제 위기), 표·카드·겹쳐 보기·경로 표가 모두 SOX 값
+  4) 폭락 비교가 SOX 8사례 + 현재로 바뀌고(유형 배지 업황 사이클/경제 위기), 표·카드·겹쳐 보기(창 1·3·6·12개월)·경로 표가 모두 SOX 값
   5) 사례 상세(#/gauge/crash/sox-2022)와 현재 상세(#/gauge/crash/sox-now)가 열리고 SOX 값으로 채워진다
   6) 나스닥으로 돌아오면 6사례·^NDX 현재 값 그대로(반도체 자료가 섞이지 않는다) — 왕복 3회 뒤에도 같다
   7) 홈 SOXL 카드·점수 상세(#/score/sox)에 같은 판정·같은 브레이크 수치가 있다(나스닥에는 없다)
@@ -195,6 +195,19 @@ def main():
                 check('[%d] 겹쳐 보기 현재 낙폭 = ^SOX 값' % width, dd_now == '%+.1f%%' % now['dd_now'], (dd_now, now['dd_now']))
                 ovsrc = pg.inner_text('#ovBasis')
                 check('[%d] 겹쳐 보기 기준 줄이 ^SOX' % width, '^SOX' in ovsrc, ovsrc[:60])
+                winbtns = pg.evaluate("()=>[...document.querySelectorAll('[data-ovwin]')].map(b=>b.textContent.trim())")
+                check('[%d] 겹쳐 보기 창 버튼이 1·3·6·12개월' % width, winbtns == ['1개월', '3개월', '6개월', '1년'], winbtns)
+                winon = pg.evaluate("""()=>({lab: (document.querySelector('#ovWinLab')||{}).textContent,
+                  on: [...document.querySelectorAll('[data-ovwin].on')].map(b=>b.textContent.trim())})""")
+                check('[%d] 고른 창과 라벨이 맞다' % width, winon['on'] == [winon['lab']] and winon['lab'] in ('1개월', '3개월', '6개월', '1년'), winon)
+                pg.click('[data-ovwin="1"]')
+                pg.wait_for_timeout(500)
+                w1m = pg.evaluate("""()=>{const o=document.querySelector('#ovChart').__ov;
+                  const xs=o.series[0].pts.map(p=>Math.abs(p[0]));
+                  return {lab:(document.querySelector('#ovWinLab')||{}).textContent, span: Math.max.apply(null, xs)};}""")
+                check('[%d] 1개월 창 = 21거래일' % width, w1m['lab'] == '1개월' and w1m['span'] == 21, w1m)
+                pg.click('[data-ovwin="3"]')
+                pg.wait_for_timeout(400)
                 rows = pg.evaluate("()=>[...document.querySelectorAll('.g-sec[data-sec=crash] table tbody tr')].length")
                 check('[%d] 닮은 날 표 9 + 경로 표 9 = 18행' % width, rows == 18, rows)
                 check('[%d] 오늘(현재) 줄이 진행 중 · SOX' % width,

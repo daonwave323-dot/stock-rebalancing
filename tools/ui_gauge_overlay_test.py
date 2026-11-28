@@ -9,7 +9,8 @@
   3) 보기 눈금은 낙폭 %(기본) · 고점=100 · 저점=100 셋 — '날짜' 보기는 없다
   4) '현재' 선은 사례 선과 같은 ^NDX 계열 — 수직 낙하 없이 이어지고, TQQQ/SOXL을 바꿔도 그대로
   5) '현재' 칩을 끄면 선·라벨·현재 낙폭 숫자가 함께 사라지고, 다시 켜면 돌아온다
-  6) 창 슬라이더 6개월~3년 — 축 범위·눈금·캡션이 함께 바뀐다
+  6) 창 버튼 1개월·3개월·6개월·1년(기본 3개월) — 축 범위·눈금·캡션이 함께 바뀌고,
+     예전 '년' 저장값도 허용값으로 옮겨진다(나스닥·반도체 공통)
   7) 새로 고침 후 보기·창 유지
 """
 import functools
@@ -196,50 +197,113 @@ def main():
           n: document.querySelector('#ovChart').__ov.series.length})""")
         check('전체 다시 누르면 모두 켜짐', all(allon['chips']) and allon['n'] == len(crashes['cases']), allon)
 
-        # ---------------------------------------------------- 5) 창 슬라이더 6개월~3년
+        # ---------------------------------------------------- 5) 창 버튼 1개월·3개월·6개월·1년
+        WIN_DAYS = {'1개월': 21, '3개월': 63, '6개월': 126, '1년': 252}
+
         def window_state():
             return pg.evaluate("""() => {
               const texts = [...document.querySelectorAll('#ovChart svg text')].map(e=>e.textContent);
+              const o = document.querySelector('#ovChart').__ov;
+              const xs = (o && o.series.length) ? o.series[0].pts.map(p=>Math.abs(p[0])) : [];
               return {win: (document.querySelector('#ovWinLab')||{}).textContent, texts,
+                      btns: [...document.querySelectorAll('[data-ovwin]')].map(b=>b.textContent.trim()),
+                      on: [...document.querySelectorAll('[data-ovwin]')].filter(b=>b.classList.contains('on')).map(b=>b.textContent.trim()),
+                      span: xs.length ? Math.max.apply(null, xs) : null,
+                      slider: !!document.querySelector('#ovWin'),
                       cap: (document.querySelector('#ovCaption')||{}).textContent,
-                      saved: localStorage.getItem('stockrebal.crashWin')};
+                      saved: localStorage.getItem('stockrebal.crashWin'),
+                      unit: localStorage.getItem('stockrebal.crashWinUnit')};
             }""")
         w1 = window_state()
-        check('창 기본 1년', w1['win'] == '1년', w1['win'])
-        for val, lab in (('0.5', '6개월'), ('1.5', '1년 6개월'), ('2', '2년'), ('3', '3년')):
-            pg.evaluate("() => { const s=document.querySelector('#ovWin'); s.value='%s'; s.dispatchEvent(new Event('input',{bubbles:true})); }" % val)
-            pg.wait_for_timeout(500)
+        check('창 버튼 넷: 1개월·3개월·6개월·1년', w1['btns'] == ['1개월', '3개월', '6개월', '1년'], w1['btns'])
+        check('창 기본 3개월', w1['win'] == '3개월' and w1['on'] == ['3개월'], (w1['win'], w1['on']))
+        check('옛 슬라이더(#ovWin)는 없음', not w1['slider'], w1['slider'])
+        check('창 저장값이 개월 단위(3 · mo)', w1['saved'] in ('3', 3) and w1['unit'] == '"mo"', (w1['saved'], w1['unit']))
+        check('기본 3개월 = 63거래일 창', w1['span'] == WIN_DAYS['3개월'], w1['span'])
+        WIN_MONTHS = {'1개월': '1', '3개월': '3', '6개월': '6', '1년': '12'}
+        WIN_VALUES = {'1개월': 1, '3개월': 3, '6개월': 6, '1년': 12}
+        for lab in ('1개월', '6개월', '1년', '3개월'):
+            pg.click('[data-ovwin="%s"]' % WIN_MONTHS[lab])
+            pg.wait_for_timeout(450)
             wv = window_state()
-            check('창 %s 슬라이더' % lab, wv['win'] == lab and wv['saved'] in ('"%s"' % val, val), (wv['win'], wv['saved']))
+            saved_ok = wv['saved'] in (str(WIN_VALUES[lab]), WIN_VALUES[lab])
+            check('창 %s 버튼 — 라벨·거래일·저장' % lab,
+                  wv['win'] == lab and wv['on'] == [lab] and wv['span'] == WIN_DAYS[lab] and saved_ok,
+                  (wv['win'], wv['on'], wv['span'], wv['saved']))
         # 저점 보기에서 축·캡션이 고른 기간을 따른다
         pg.click('[data-ovscale="trough"]')
-        pg.wait_for_timeout(500)
+        pg.wait_for_timeout(450)
         tr3 = pg.evaluate("() => [...document.querySelectorAll('#ovChart svg text')].map(e=>e.textContent)")
-        check('저점 보기 축이 ±3년', any('−3년' in x for x in tr3) and any('+3년' in x for x in tr3), tr3[:8])
-        check('저점 보기 캡션에 3년', '3년' in pg.inner_text('#ovCaption'), pg.inner_text('#ovCaption')[:70])
-        pg.evaluate("() => { const s=document.querySelector('#ovWin'); s.value='0.5'; s.dispatchEvent(new Event('input',{bubbles:true})); }")
-        pg.wait_for_timeout(500)
-        tr05 = pg.evaluate("() => [...document.querySelectorAll('#ovChart svg text')].map(e=>e.textContent)")
-        check('저점 보기 축이 ±6개월', any('−6개월' in x for x in tr05) and any('+6개월' in x for x in tr05), tr05[:8])
-        pg.screenshot(path=os.path.join(SHOTS, 'gauge-390-overlay-6m.png'))
-        pg.evaluate("() => { const s=document.querySelector('#ovWin'); s.value='1'; s.dispatchEvent(new Event('input',{bubbles:true})); }")
-        pg.wait_for_timeout(400)
-        pg.evaluate("() => document.querySelector('[data-ovscale=\"pct\"]').click()")
+        check('저점 보기 축이 ±3개월', any('−3개월' in x for x in tr3) and any('+3개월' in x for x in tr3), tr3[:8])
+        check('저점 보기 캡션에 3개월·63거래일', '3개월' in pg.inner_text('#ovCaption') and '63거래일' in pg.inner_text('#ovCaption'),
+              pg.inner_text('#ovCaption')[:90])
+        pg.click('[data-ovwin="1"]')
+        pg.wait_for_timeout(450)
+        tr1 = pg.evaluate("() => [...document.querySelectorAll('#ovChart svg text')].map(e=>e.textContent)")
+        check('저점 보기 축이 ±1개월', any('−1개월' in x for x in tr1) and any('+1개월' in x for x in tr1), tr1[:8])
+        pg.screenshot(path=os.path.join(SHOTS, 'gauge-390-overlay-1m.png'))
+        pg.click('[data-ovwin="3"]')
+        pg.wait_for_timeout(350)
+        pg.screenshot(path=os.path.join(SHOTS, 'gauge-390-overlay-3m.png'))
+        pg.click('[data-ovscale="pct"]')
         pg.wait_for_timeout(400)
 
+        def open_crash():
+            pg.evaluate("""() => {
+              const body = document.querySelector('.g-sec[data-sec=\"crash\"] .g-secbody');
+              const b = document.querySelector('[data-toggle=\"crash\"]');
+              if (body && body.hidden && b) b.click();
+            }""")
+            pg.wait_for_timeout(800)
+
+        # 반도체(SOX)도 같은 네 단계 — 사례를 바꿔도 창은 그대로 동작한다
+        pg.click('[data-target="sox"]')
+        pg.wait_for_timeout(700)
+        open_crash()
+        ws = window_state()
+        check('반도체도 창 버튼 넷', ws['btns'] == ['1개월', '3개월', '6개월', '1년'], ws['btns'])
+        pg.click('[data-ovwin="6"]')
+        pg.wait_for_timeout(500)
+        ws6 = window_state()
+        check('반도체 6개월 창 126거래일', ws6['win'] == '6개월' and ws6['span'] == 126, (ws6['win'], ws6['span']))
+        pg.screenshot(path=os.path.join(SHOTS, 'gauge-390-soxl-overlay-6m.png'))
+        pg.click('[data-target="ndx"]')
+        pg.wait_for_timeout(600)
+
+        # ---------------------------------------------------- 5b) 예전 '년' 저장값 마이그레이션
+        OLD_WIN = [('0.5', '6개월'), ('1', '1년'), ('1.5', '1년'), ('2', '1년'), ('2.5', '1년'), ('3', '1년')]
+        for old, want in OLD_WIN:
+            pg.evaluate("() => { localStorage.setItem('stockrebal.crashWin', '%s'); localStorage.removeItem('stockrebal.crashWinUnit'); }" % old)
+            pg.reload()
+            pg.wait_for_selector('#gTop')
+            pg.wait_for_timeout(800)
+            open_crash()
+            mv = window_state()
+            check('옛 저장값 %s년 → %s' % (old, want),
+                  mv['win'] == want and mv['unit'] == '"mo"', (mv['win'], mv['saved'], mv['unit']))
+        # 허용 밖 값(7개월)도 가장 가까운 허용값으로
+        pg.evaluate("() => { localStorage.setItem('stockrebal.crashWin', '7'); localStorage.setItem('stockrebal.crashWinUnit', '\"mo\"'); }")
+        pg.reload()
+        pg.wait_for_selector('#gTop')
+        pg.wait_for_timeout(800)
+        open_crash()
+        bad = window_state()
+        check('허용 밖 7개월 → 6개월로 보정', bad['win'] == '6개월', (bad['win'], bad['saved']))
+
         # ---------------------------------------------------- 6) 새로고침 유지
+        pg.click('[data-ovwin="6"]')
+        pg.wait_for_timeout(450)
         pg.reload()
         pg.wait_for_selector('#gTop')
         pg.wait_for_timeout(900)
-        pg.evaluate("() => { const b=document.querySelector('[data-toggle=\"crash\"]'); if(b) b.click(); }")
-        pg.wait_for_timeout(900)
+        open_crash()
         kept = pg.evaluate("""() => ({
           scale: [...document.querySelectorAll('[data-ovscale]')].filter(b=>b.classList.contains('on')).map(b=>b.getAttribute('data-ovscale')),
           win: (document.querySelector('#ovWinLab')||{}).textContent,
           on: [...document.querySelectorAll('#ovChips [data-ovcase]')].filter(b=>b.classList.contains('on')).length
         })""")
         check('보기 선택 새로고침 후 유지', kept['scale'] == ['pct'], kept)
-        check('창(1년) 새로고침 후 유지', kept['win'] == '1년', kept)
+        check('창(6개월) 새로고침 후 유지', kept['win'] == '6개월', kept)
         check('새로고침 뒤에도 사례 전부 켜짐', kept['on'] == len(crashes['cases']), kept)
 
         e2 = [e for e in errs if 'live.json' not in e and '404' not in e]

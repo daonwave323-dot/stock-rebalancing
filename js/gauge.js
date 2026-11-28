@@ -1109,13 +1109,45 @@
   var OV_OFF = [];   /* 사례 칩 — 처음엔 전부 켜진다. 끄기는 이 화면에서만(저장하지 않음).
                         '현재'(id 'today')만 예외로 켜고 끈 상태를 브라우저에 남긴다. */
 
-  /* 저점 기준 보이는 기간 — 6개월 단위 6단계. 거래일은 1년=252 기준(0.5년=126, 1.5년=378). */
-  var OV_WINS = [0.5, 1, 1.5, 2, 2.5, 3];
+  /* 저점 기준 보이는 기간 — 1·3·6·12개월 4단계(무아 님 2026-11-28 지시).
+     값은 '개월'로 들고 다니고, 거래일은 1년=252 기준(1개월≈21, 3개월≈63, 6개월≈126, 1년=252). */
+  var OV_WIN_MONTHS = [1, 3, 6, 12];
+  var OV_WIN_DEFAULT = 3;
+  /* 거래일 수 — 값을 안 주면 지금 고른 창(OV.win, 개월)을 쓴다 */
+  function ovWinDays(v) {
+    if (v === null || v === undefined) v = OV.win;
+    return Math.round(252 * (Number(v) || OV_WIN_DEFAULT) / 12);
+  }
   function ovWinText(v) {
-    var m = Math.round(Number(v) * 12);
+    var m = Math.round(Number(v));
     if (!m || isNaN(m)) return '—';
     var y = Math.floor(m / 12), r = m % 12;
     return y ? (y + '년' + (r ? ' ' + r + '개월' : '')) : (r + '개월');
+  }
+  /* 가운데 눈금 — 반으로 나누어떨어지면 개월(6개월→3개월), 아니면 주(1개월→2주, 3개월→6주) */
+  function ovWinHalfText(v) {
+    var half = (Number(v) || OV_WIN_DEFAULT) / 2;
+    if (half % 1 === 0) return ovWinText(half);
+    return Math.max(1, Math.round(half * 21 / 5)) + '주';
+  }
+  /* 허용값(1·3·6·12) 중 가장 가까운 값 — 비율로 재서 3↔6 사이는 6에 가깝게 둔다 */
+  function ovWinNearest(months) {
+    var best = OV_WIN_DEFAULT, bd = Infinity;
+    OV_WIN_MONTHS.forEach(function (x) {
+      var d = Math.abs(Math.log(x / months));
+      if (d < bd) { bd = d; best = x; }
+    });
+    return best;
+  }
+  /* 저장값 읽기 — 새 값은 개월 단위(crashWinUnit='mo').
+     예전 저장값(0.5·1·1.5·2·2.5·3)은 '년'이었으므로 개월로 바꾼 뒤 가장 가까운 허용값으로 보정한다. */
+  function ovWinStored() {
+    var saved = S.get('crashWin', null);
+    if (saved === null || saved === undefined || saved === '') return OV_WIN_DEFAULT;
+    var n = Number(saved);
+    if (!isFinite(n) || n <= 0) return OV_WIN_DEFAULT;
+    if (S.get('crashWinUnit', null) === 'mo') return OV_WIN_MONTHS.indexOf(n) >= 0 ? n : ovWinNearest(n);
+    return ovWinNearest(n * 12);
   }
   function ovTodayOn() { return OV_OFF.indexOf('today') < 0; }
   function ovSetToday(on) {
@@ -1134,7 +1166,7 @@
     if (scale === 'trough') src = c.troughPath || [];
     else if (scale === 'peak') src = (c.prePath || []).concat(c.path || []);
     else src = (c.prePath || []).concat(c.path || []);
-    var lim = 252 * (OV.win || 1);
+    var lim = ovWinDays();
     return src.map(function (p) {
       var v;
       if (scale === 'pct') v = p[1];
@@ -1173,7 +1205,7 @@
    *   path    : 고점(10/06) → 지금
    *   trough  : 저점 기준 ±252거래일 — 저점은 고점 이후 최저점(지금 2026-11-20), 값은 저점 종가 = 100 기준 %.
    * 좌표 규칙도 사례와 같다: 고점 계열 x=0 이 고점, 저점 계열 x=0 이 저점.
-   * 그래서 6개월~3년 창에서 사례들과 같은 밀도로 퍼지고, 현재 선은 지금 점에서 끝난다.
+   * 그래서 고른 창(1·3·6·12개월)에서 사례들과 같은 밀도로 퍼지고, 현재 선은 지금 점에서 끝난다.
    */
   function ovToday(t) {
     t = t || CT;
@@ -1265,8 +1297,12 @@
     if (saved === 'date') { OV.scale = 'pct'; S.set('crashOv', 'pct'); }   /* 옛 '날짜' 보기 → 낙폭 % */
     else if (OV_SCALES.indexOf(saved) >= 0) OV.scale = saved;
     if (OV_SCALES.indexOf(OV.scale) < 0) OV.scale = 'pct';
-    var savedWin = Number(S.get('crashWin', 1));
-    OV.win = OV_WINS.indexOf(savedWin) >= 0 ? savedWin : 1;
+    OV.win = ovWinStored();
+    /* 예전 '년' 저장값·허용 밖 값은 여기서 한 번 새 기준(개월)으로 옮겨 적는다 */
+    if (S.get('crashWinUnit', null) !== 'mo' || S.get('crashWin', null) !== OV.win) {
+      S.set('crashWin', OV.win);
+      S.set('crashWinUnit', 'mo');
+    }
     /* '현재' 켜고 끈 상태는 저장값을 따른다(사례 칩은 이 화면에서만 유지) */
     if (S.get('crashTodayOff', false) && ovTodayOn()) OV_OFF.push('today');
 
@@ -1293,9 +1329,15 @@
         '</span>' +
       '</div>' +
       '<div class="pill-row" id="ovChips" style="margin:8px 0 2px">' + allChip + chips + todayChip + '</div>' +
-      '<div class="g-win"><div class="row" style="justify-content:space-between"><span class="g-cap" style="margin:0">저점 기준 보이는 기간 <b id="ovWinLab">' + ovWinText(OV.win) + '</b></span>' +
-        '<span class="g-cap" style="margin:0">6개월 · 1년 · 1년 6개월 · 2년 · 2년 6개월 · 3년</span></div>' +
-        '<input type="range" id="ovWin" min="0.5" max="3" step="0.5" value="' + OV.win + '" aria-label="저점 기준 보이는 기간(6개월 단위)"></div>' +
+      '<div class="g-win"><div class="row" style="justify-content:space-between;align-items:baseline">' +
+        '<span class="g-cap" style="margin:0">저점 기준 보이는 기간</span>' +
+        '<b class="g-winlab" id="ovWinLab">' + ovWinText(OV.win) + '</b></div>' +
+        '<span class="g-seg g-winseg" id="ovWinSeg" role="group" aria-label="저점 기준 보이는 기간">' +
+          OV_WIN_MONTHS.map(function (m) {
+            var on = OV.win === m;
+            return '<button type="button" class="' + (on ? 'on' : '') + '" data-ovwin="' + m + '" aria-pressed="' + (on ? 'true' : 'false') + '">' + ovWinText(m) + '</button>';
+          }).join('') +
+        '</span></div>' +
       '<p class="note" style="margin:0 0 4px">처음에는 전부 켜져 있습니다. 사례 칩의 끄기는 이 화면에서만 유지되고, 현재 칩의 상태는 저장됩니다.</p>' +
       '<div class="row" id="ovNowBig" style="justify-content:space-between;align-items:baseline;margin:2px 0 2px">' +
         '<div class="g-stat" style="margin:0">현재 낙폭 <b class="num neg" id="ovNowDd" style="font-size:21px">—</b></div>' +
@@ -1309,21 +1351,20 @@
   }
 
   function ovCaptionText(scale) {
-    var nd = Math.round(252 * (OV.win || 1));
+    var nd = ovWinDays();
     var span = '−' + ovWinText(OV.win) + '~+' + ovWinText(OV.win);
-    var shortEnd = OV.win > 1 ? ' 넓힌 구간의 끝은 사례 자료가 고점 ±1년까지만 있어 선이 짧게 끝납니다.' : '';
     if (scale === 'trough') {
-      return '각 사례의 **저점 = 100**, 세로는 로그 눈금. 저점 0일 기준 ' + span + '(' + nd + '거래일, 슬라이더) 구간이라 선이 저점에서 만납니다. ' +
-        '현재 선은 지금까지의 잠정 저점을 100으로 두고 같은 방식으로 옮겼습니다(최종 저점이 아니라 잠정값).' + shortEnd;
+      return '각 사례의 **저점 = 100**, 세로는 로그 눈금. 저점 0일 기준 ' + span + '(' + nd + '거래일, 위 기간 버튼) 구간이라 선이 저점에서 만납니다. ' +
+        '현재 선은 지금까지의 잠정 저점을 100으로 두고 같은 방식으로 옮겼습니다(최종 저점이 아니라 잠정값).';
     }
     if (scale === 'peak') {
-      return '각 사례의 **고점 = 100**, 세로는 로그 눈금. 고점 0일 기준 ' + span + '.' + shortEnd;
+      return '각 사례의 **고점 = 100**, 세로는 로그 눈금. 고점 0일 기준 ' + span + '.';
     }
     if (scale === 'date') {
       return '각 사례를 **실제 날짜** 위치에 놓고 세로는 낙폭 %로. 1929·1987·2000·2008·2020·2025가 시간 순서로 어디에 앉는지 보입니다. ' +
         '가로 위치는 고점 날짜에 거래일(주말 제외)을 더해 잡은 근사값입니다 — 고점·저점 날짜는 자료 그대로입니다.';
     }
-    return '같은 구간을 **낙폭 %** 선형 눈금으로. 사례·현재 모두 ' + cname(CT) + ' 지수 낙폭이라 같은 눈금에서 겹쳐집니다. 로그 보기와 달리 깊은 낙폭이 더 크게 보입니다.' + shortEnd;
+    return '같은 구간을 **낙폭 %** 선형 눈금으로. 사례·현재 모두 ' + cname(CT) + ' 지수 낙폭이라 같은 눈금에서 겹쳐집니다. 로그 보기와 달리 깊은 낙폭이 더 크게 보입니다.';
   }
 
   /* ------------------------------------------------------------ 날짜 축 보기
@@ -1344,7 +1385,7 @@
 
   function ovDateSeries(c) {
     var pts = [];
-    var lim = 252 * (OV.win || 1);          /* 고점 기준 ±창(1~3년)만 그린다(자료가 고점 ±1년까지) */
+    var lim = ovWinDays();                  /* 고점 기준 ±창(1·3·6·12개월)만 그린다(자료가 고점 ±1년까지) */
     (c.prePath || []).concat(c.path || []).forEach(function (p) {
       if (p[0] < -lim || p[0] > lim) return;
       var ms = addTradingDays(c.peak, p[0]);
@@ -1488,7 +1529,7 @@
       var tSnap2 = snapshot(ST.target);
       var offNow = tSnap2.L ? (Date.parse(String(today.iso) + 'T00:00:00Z') - Date.parse('2026-01-01T00:00:00Z')) / 86400000 : null;
       basis.textContent = '오늘 기준 — ' + today.label + ' 낙폭 ' + F.pct(today.dd, 1) +
-        ' · 창 = 저점 기준 ±' + OV.win + '년(자료는 고점 ±1년까지) · 세로는 낙폭 % · 가로 위치는 고점 + 거래일 근사';
+        ' · 창 = 저점 기준 ±' + ovWinText(OV.win) + ' · 세로는 낙폭 % · 가로 위치는 고점 + 거래일 근사';
     }
   }
 
@@ -1530,15 +1571,15 @@
       var loL = lo, hiL = hi;
     }
     if (hiL === loL) hiL = loL + 1;
-    var lim = 252 * (OV.win || 1);
+    var lim = ovWinDays();
     var xMin = -lim, xMax = lim;
     var iw = W - pad.l - pad.r, ih = H - pad.t - pad.b;
     var sx = function (x) { return pad.l + (x - xMin) / (xMax - xMin) * iw; };
     var sy = function (v) { return pad.t + ih - (yOf(v) - loL) / (hiL - loL) * ih; };
 
     var s = ['<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="폭락 사례 겹쳐 보기 — ' + ovScaleLabel(scale) + '">'];
-    /* 가로 눈금 — 저점/고점 기준일과 고른 기간(6개월 단위) */
-    [[-lim, '−' + ovWinText(OV.win)], [-Math.round(lim / 2), '−' + ovWinText(OV.win / 2)], [0, '0'], [Math.round(lim / 2), '+' + ovWinText(OV.win / 2)], [lim, '+' + ovWinText(OV.win)]].forEach(function (t) {
+    /* 가로 눈금 — 저점/고점 기준일과 고른 기간(1·3·6·12개월) */
+    [[-lim, '−' + ovWinText(OV.win)], [-Math.round(lim / 2), '−' + ovWinHalfText(OV.win)], [0, '0'], [Math.round(lim / 2), '+' + ovWinHalfText(OV.win)], [lim, '+' + ovWinText(OV.win)]].forEach(function (t) {
       var x = sx(t[0]);
       s.push('<line x1="' + x.toFixed(1) + '" y1="' + pad.t + '" x2="' + x.toFixed(1) + '" y2="' + (pad.t + ih) + '" stroke="var(--line)" stroke-width="1" stroke-dasharray="2 4"/>');
       s.push('<text x="' + x.toFixed(1) + '" y="' + (H - 9) + '" text-anchor="middle" font-size="10.5" fill="var(--dim)">' + t[1] + '</text>');
@@ -1601,8 +1642,7 @@
     el('#ovBasis', view).textContent = (showToday
         ? '현재 — ' + (today ? today.label + ' · ' + cname(CT) + ' 낙폭 ' + F.pct(today.dd, 1) : '값 없음(live·확정 모두 없음)')
         : '현재 선을 껐습니다' + (today ? '(' + today.label + ' · ' + cname(CT) + ' 낙폭 ' + F.pct(today.dd, 1) + ')' : '')) +
-      ' · 창 = ' + (scale === 'trough' ? '저점' : '고점') + ' 기준 ±' + ovWinText(OV.win) +
-      (OV.win > 1 ? ' (사례 자료는 고점 ±1년까지라 끝이 짧을 수 있음)' : '');
+      ' · 창 = ' + (scale === 'trough' ? '저점' : '고점') + ' 기준 ±' + ovWinText(OV.win) + ' (자료는 고점 ±1년까지)';
   }
 
   /* 차트 위 현재 낙폭 큰 숫자 — '현재' 선과 같은 값·같은 출처. 토글을 끄면 함께 숨긴다. */
@@ -2468,15 +2508,22 @@
       });
     });
 
-    /* 겹쳐 보기 — 저점 기준 창(6개월 단위 0.5~3년) */
-    var owin = el('#ovWin', view);
-    if (owin) owin.addEventListener('input', function () {
-      var wv = Number(owin.value);
-      OV.win = OV_WINS.indexOf(wv) >= 0 ? wv : 1;
-      S.set('crashWin', OV.win);
-      var lab = el('#ovWinLab', view);
-      if (lab) lab.textContent = ovWinText(OV.win);
-      drawOverlap(view, cset(CT).cases);
+    /* 겹쳐 보기 — 저점 기준 창(1·3·6·12개월 4단계 버튼) */
+    els(view, '[data-ovwin]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        var wm = Number(b.getAttribute('data-ovwin'));
+        OV.win = OV_WIN_MONTHS.indexOf(wm) >= 0 ? wm : OV_WIN_DEFAULT;
+        S.set('crashWin', OV.win);
+        S.set('crashWinUnit', 'mo');
+        els(view, '[data-ovwin]').forEach(function (x) {
+          var on = Number(x.getAttribute('data-ovwin')) === OV.win;
+          x.classList.toggle('on', on);
+          x.setAttribute('aria-pressed', on ? 'true' : 'false');
+        });
+        var lab = el('#ovWinLab', view);
+        if (lab) lab.textContent = ovWinText(OV.win);
+        drawOverlap(view, cset(CT).cases);
+      });
     });
 
     /* 겹쳐 보기 — 사례 칩 켜고 끄기 (사례·전체·현재 한 곳에서) */
@@ -2530,7 +2577,7 @@
           if (box) box.innerHTML = ovDateReadout(ms, o.series, o.today);
           return;
         }
-        var lim3 = 252 * (OV.win || 1);
+        var lim3 = ovWinDays();
         var day = Math.round((vx - o.pad.l) / (o.W - o.pad.l - o.pad.r) * (2 * lim3) - lim3);
         day = Math.max(-lim3, Math.min(lim3, day));
         if (box) box.innerHTML = ovReadoutText(day, o.scale, o.today, o.series, view);
