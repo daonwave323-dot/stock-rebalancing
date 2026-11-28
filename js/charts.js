@@ -116,12 +116,15 @@
       } else if (m.shape === 'diamond') {
         s.push('<path d="M' + x + ' ' + (y - 5) + 'L' + (x + 5) + ' ' + y + 'L' + x + ' ' + (y + 5) + 'L' + (x - 5) + ' ' + y + 'Z" fill="' + (m.color || '#e8ecf4') + '"/>');
       } else {
-        s.push('<circle cx="' + x.toFixed(1) + '" cy="' + y.toFixed(1) + '" r="' + (m.r || 3.2) + '" fill="' + (m.color || '#e8ecf4') + '"/>');
+        s.push('<circle cx="' + x.toFixed(1) + '" cy="' + y.toFixed(1) + '" r="' + (m.r || 3.2) + '" fill="' +
+          (m.hollow ? 'none' : (m.color || '#e8ecf4')) + '"' +
+          (m.hollow ? ' stroke="' + (m.color || '#e8ecf4') + '" stroke-width="1.6"' : '') + '/>');
       }
       if (m.label) {
         var anchor = m.anchor || (x > W * 0.75 ? 'end' : 'start');
         var dx = anchor === 'end' ? -7 : 7;
-        s.push('<text x="' + (x + dx).toFixed(1) + '" y="' + (y - 7).toFixed(1) + '" text-anchor="' + anchor + '" font-size="10.5" fill="' + esc(m.color || '#d5dce8') + '">' + esc(m.label) + '</text>');
+        s.push('<text x="' + (x + dx).toFixed(1) + '" y="' + (y - (m.dy === undefined ? 7 : m.dy)).toFixed(1) + '" text-anchor="' + anchor + '"' +
+          (m.bg ? ' data-bg="1"' : '') + ' font-size="10.5" fill="' + esc(m.color || '#d5dce8') + '">' + esc(m.label) + '</text>');
       }
     });
 
@@ -129,6 +132,26 @@
     s.push('<line x1="' + pad.l + '" y1="' + (pad.t + ih) + '" x2="' + (W - pad.r) + '" y2="' + (pad.t + ih) + '" stroke="' + AXIS + '"/>');
     s.push('</svg>');
     host.innerHTML = s.join('');
+
+    /* 글자 뒤에 판을 깔아 준다(opt.bg) — 값 라벨이 선 위에 겹쳐도 읽히게. 실제 글자 폭을 재서 깐다. */
+    var bgs = host.querySelectorAll('text[data-bg]');
+    if (bgs.length) {
+      var NS = 'http://www.w3.org/2000/svg';
+      Array.prototype.forEach.call(bgs, function (tx) {
+        var bb;
+        try { bb = tx.getBBox(); } catch (e) { return; }
+        if (!bb || !bb.width) return;
+        var rect = document.createElementNS(NS, 'rect');
+        rect.setAttribute('x', (bb.x - 3).toFixed(1));
+        rect.setAttribute('y', (bb.y - 1.5).toFixed(1));
+        rect.setAttribute('width', (bb.width + 6).toFixed(1));
+        rect.setAttribute('height', (bb.height + 3).toFixed(1));
+        rect.setAttribute('rx', '3');
+        rect.setAttribute('fill', '#151b25');
+        rect.setAttribute('fill-opacity', '0.82');
+        tx.parentNode.insertBefore(rect, tx);
+      });
+    }
   }
 
   /**

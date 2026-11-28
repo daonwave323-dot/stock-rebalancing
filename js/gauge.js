@@ -1,8 +1,9 @@
 /* 매수 지표 탭 — 원본 앱 GaugeScreen(밸류게이지) 을 웹으로 옮긴 화면.
  *
- * 구성(위에서 아래로, 2026-11-28 무아 님 지시): 대상 칩·가격 → 기준 줄 → 밸류게이지 카드 →
- * 문턱 통계 → 육각 레이더 → 최근 한 달 두 차트 → 전체 흐름 → 폭락 비교(접힘) →
- * 매수 지표 입력·지표 추적(기본 접힘) → 지표 기록·버블·산식(접힘).
+ * 구성(위에서 아래로, 2026-11-28 무아 님 지시): 대상 칩·가격 → 기준 줄 → 밸류게이지 카드(머리 줄 오른쪽에
+ * 정규장/프리마켓 토글) → 매수 지표 입력·지표 추적(기본 접힘) → 희귀도 설명 → 문턱 통계 → 육각 레이더 →
+ * 최근 한 달 두 차트 → 전체 흐름 → 폭락 비교(접힘) → 지표 기록·버블·산식(접힘).
+ * 두 밸류게이지 차트는 최고 점수(빨간 점)와 오늘(초록 점)을 세로 점선·값 라벨로 찍는다.
  *
  * 계산은 원본 core/Singularity.kt 와 같은 식이다(가중치·경계·클램프 그대로). 값이 없는 지표는
  * 빼고 남은 가중치 합으로 나눈다. 과거 통계·일봉·주별 이력은 data/gauge.json 에 미리 계산해 두었다.
@@ -226,6 +227,10 @@
       shown = calc.score;
     } else if (basis === 'live' && pair && pair.score !== null && pair.score !== undefined) {
       shown = pair.score;
+    } else if (basis === 'live' && pair) {
+      /* live.json 에 실시간 점수가 없어도(장 마감 등) 화면의 여섯 값으로 같은 식으로 낸다 —
+         값·레이더만 바뀌고 점수가 확정 종가에 머무는 어긋남을 만들지 않는다(홈과 같은 식) */
+      shown = calc.score;
     } else if (L.score !== null && L.score !== undefined) {
       shown = L.score;
     } else {
@@ -314,8 +319,12 @@
       '<span>확정</span><b>' + (L.score === null || L.score === undefined ? '—' : trim1(L.score)) + '</b>' +
       '<i>' + F.day(L.as_of) + ' 종가' + (snap.basis === 'close' && !snap.manual ? ' · 지금 화면' : '') + '</i></span>';
     if (meta) {
+      /* 실시간 점수는 live.json 이 계산해 둔 값이 우선, 없으면 지금 화면의 여섯 값으로 낸 점수 */
+      var liveSc = (meta.score === null || meta.score === undefined)
+        ? (snap.manual ? null : (snap.pair ? snap.result.score : null))
+        : meta.score;
       out += '<span class="pair ' + (snap.basis === 'live' && !snap.manual ? 'on' : '') + '">' +
-        '<span>실시간(추정)</span><b>' + (meta.score === null || meta.score === undefined ? '—' : trim1(meta.score)) + '</b>' +
+        '<span>실시간(추정)</span><b>' + (liveSc === null || liveSc === undefined ? '—' : trim1(liveSc)) + '</b>' +
         '<i>' + esc(etPart(meta) || '값 없음') + (snap.basis === 'live' && !snap.manual ? ' · 지금 화면' : '') + '</i></span>';
     }
     if (snap.manual) {
@@ -340,22 +349,25 @@
     '</span>';
   }
 
+  /* 정규장(확정 종가) / 프리마켓(실시간) — 증시 탭 위쪽과 같은 모양·같은 저장값(Basis).
+     무아 님 지시(2026-11-28)로 밸류게이지 카드 머리 줄 오른쪽에 두고, 입력 섹션(접힌 아코디언)에는 두지 않는다. */
   function basisSegHtml(snap) {
     var b = snap.basis;
-    return '<span class="g-seg" role="group" aria-label="시세 기준">' +
-      '<button type="button" data-basis="close" class="' + (b === 'close' ? 'on' : '') + '">확정 종가</button>' +
-      '<button type="button" data-basis="live" class="' + (b === 'live' ? 'on' : '') + '">실시간(프리마켓)</button>' +
-    '</span>';
+    return '<div class="mkt-tabs mini g-baseseg" id="gBaseSeg" role="group" aria-label="시세 기준">' +
+      '<button class="tab' + (b === 'close' ? ' on' : '') + '" type="button" data-basis="close" aria-pressed="' + (b === 'close') + '">정규장</button>' +
+      '<button class="tab' + (b === 'live' ? ' on' : '') + '" type="button" data-basis="live" aria-pressed="' + (b === 'live') + '">프리마켓</button>' +
+    '</div>';
   }
 
-  function basisBadgeHtml(snap, meta) {
-    /* snap.manual 이면 기준 전환은 참고용 — 값은 내가 넣은 값 그대로 */
-    var on = snap.manual ? '직접 입력값'
-      : (snap.basis === 'live'
-        ? (snap.pair ? '실시간(추정) · ' + (etPart(meta) || '시각 없음') : '실시간 값 없음 — 확정 종가')
-        : '확정 종가 · ' + F.day(snap.L.as_of));
-    var cls = snap.manual ? 'blue' : (snap.basis === 'live' && snap.pair ? 'live' : 'grey');
-    return '<span class="badge ' + cls + '">' + esc(on) + '</span>';
+  /* 지금 화면이 어느 기준인지 한 줄 — 토글 바로 아래에 둔다(실시간이면 ET 시각·세션까지) */
+  function basisLineText(snap, meta) {
+    if (snap.manual) return '직접 입력값으로 계산 중 — 기준은 값에 영향이 없습니다';
+    if (snap.basis === 'live') {
+      return snap.pair
+        ? '프리마켓 · 실시간(추정) ' + (etPart(meta) || '시각 없음')
+        : '프리마켓 값 없음 — 정규장 종가로 계산';
+    }
+    return '정규장 · 확정 종가 ' + F.day(snap.L.as_of);
   }
 
   /* ------------------------------------------------------------ 그리기 도구 */
@@ -528,8 +540,9 @@
     var rar = rarityOf(t);
     var gaugeCard =
       '<article class="panel g-card">' +
-        '<div class="g-head"><h2>매수지표 · 밸류게이지</h2><span class="note">(높을수록 저평가·공포)</span>' +
-          '<span class="spacer"></span><span class="badge ' + (result.score >= BUY ? 'good' : 'grey') + '" id="gBadge">' + badgeOf(result.score) + '</span></div>' +
+        '<div class="g-head"><h2>매수지표 · 밸류게이지</h2><span class="spacer"></span>' + basisSegHtml(snap) + '</div>' +
+        '<div class="g-head2"><span class="note">(높을수록 저평가·공포)</span>' +
+          '<span class="badge ' + (result.score >= BUY ? 'good' : 'grey') + '" id="gBadge">' + badgeOf(result.score) + '</span></div>' +
         '<div class="g-score"><b id="gScore">' + trim1(result.score) + '</b><span>/ ' + BUY + ' 이상 매수</span></div>' +
         '<div class="g-verdict g-tone-' + v.tone + '" id="gVerdict">' + esc(v.label) + '</div>' +
         '<div class="g-verdict-sub" id="gVerdictSub">' + esc(v.sub) + '</div>' +
@@ -540,8 +553,9 @@
           : '매수 구간(' + BUY + ')까지 ' + trim1(BUY - result.score) + '점 남았습니다') + '</div>' +
         '<div class="g-rarity" id="gRarity">🎯 ' + esc(rar ? rar.text : '기록 없음') + '</div>' +
         '<div class="g-contrib" id="gContrib">' + esc(contribText(result)) + '</div>' +
-      '</article>' +
-      '<p class="note" id="gRarityNote">' + rarityNoteHtml(rar, t) + '</p>';
+      '</article>';
+    /* 희귀도 설명은 입력 머리 한 줄 뒤에 붙인다(2026-11-28 — 카드 바로 다음은 입력 섹션) */
+    var rarityNote = '<p class="note" id="gRarityNote">' + rarityNoteHtml(rar, t) + '</p>';
 
     /* 4) 문턱 통계 */
     var statBlock =
@@ -580,7 +594,7 @@
         '<p class="g-cap" id="gBarsSum">' + esc(summary) + '</p>' +
         '<div class="g-sub mt">밸류게이지 · 최근 한 달</div>' +
         '<div class="g-cap">' + (monthPts.length >= 2
-          ? '일별 · 이 구간 ' + Math.round(mMin) + '~' + Math.round(mMax) + ' · 점선 ' + BUY + ' · 오른쪽 끝 = 지금 점수'
+          ? '일별 · 이 구간 ' + Math.round(mMin) + '~' + Math.round(mMax) + ' · 점선 ' + BUY + ' · 빨간 점 = 최고, 초록 점 = 오늘'
           : '이력이 쌓이는 중 ' + monthPts.length + '일치') + '</div>' +
         '<div class="chart-box" id="gMonth"></div>' +
       '</article>';
@@ -589,7 +603,7 @@
     var weekly = (G.weekly[t] || []);
     var flowCard =
       '<article class="panel">' +
-        '<div class="g-sub">밸류게이지 전체 흐름 (주별 최고값 · ● 오늘)</div>' +
+        '<div class="g-sub">밸류게이지 전체 흐름 (주별 최고값 · 빨간 점 = 최고, 초록 점 = 오늘)</div>' +
         '<div class="g-cap">' + (weekly.length >= 3
           ? '주별 최고값 · 주 ' + weekly.length + '개 · 세로축 30~100 · ' + F.day(weekly[0][0]) + ' ~ ' + F.day(weekly[weekly.length - 1][0]) + ' · 점선 = 매수 ' + BUY
           : '이력이 쌓이는 중 — ' + weekly.length + '주치') + '</div>' +
@@ -608,19 +622,23 @@
     var track = trackingHtml(t, values, result, snap);
 
     var crashOpen = !!ST.open.crash || isCrashPath();
+    /* 순서(2026-11-28 무아 님 지시) — 기준 토글은 밸류게이지 카드 머리 줄, 점수 카드 바로 뒤에 입력 머리 한 줄,
+       희귀도 설명·문턱 통계·레이더·차트는 그 뒤, 지표 기록은 맨 아래. */
     view.innerHTML =
       '<section class="hero g-hero"><div class="crumb"><a href="#/">홈</a> / 매수 지표</div>' +
         '<h1>매수 지표</h1>' +
         '<p>여섯 지표를 0~100으로 환산해 가중 평균한 <b>밸류게이지</b>입니다. 높을수록 저평가·공포이고, ' + BUY + ' 이상이면 계획한 투입 구간입니다.</p>' +
+        '<p class="g-baseline" id="gBaseLine">보는 값 — ' + esc(basisLineText(snap, meta)) + ' · 홈·증시와 같은 기준</p>' +
       '</section>' +
       head +
       gaugeCard +
+      topPanel +
+      rarityNote +
       statBlock +
       radarCard +
       chartsCard +
       flowCard +
       section('crash', '폭락 비교', '저점 전후 1년 비교 · 여섯 사례. 눌러서 폅니다.', crashHtml, crashOpen) +
-      topPanel +
       section('track', '지표 기록 · 버블 · 산식', '과거 점수 기록, 버블 체크, 무엇이 실시간인가, 매매 기준·산식. 눌러서 폅니다.', track);
 
     bind(view, t, detailId);
@@ -780,8 +798,9 @@
         '<span class="s" id="gTopHead">' + esc(inputHeadText(snap, meta)) + '</span>' +
       '</button>' +
       '<div class="g-secbody"' + (open ? '' : ' hidden') + '>' +
-        '<div class="g-ctl">' + modeSegHtml() + basisSegHtml(snap) + basisBadgeHtml(snap, meta) +
+        '<div class="g-ctl">' + modeSegHtml() +
           '<button class="btn ghost sm" type="button" id="gLiveRefresh">실시간 새로고침</button></div>' +
+        '<p class="g-cap" id="gBasisHint">기준(정규장·프리마켓)은 화면 맨 위에서 고릅니다.</p>' +
         '<p class="g-cap" id="gModeNote">' + modeNote(snap) + '</p>' +
         '<p class="g-six" id="gSix">' + sixLine(values) + '</p>' +
         '<button class="btn ghost sm" type="button" id="gIndsBtn" aria-expanded="' + (indsOpen ? 'true' : 'false') + '" style="margin-top:2px">여섯 지표 직접 조작 <span class="mark">' + (indsOpen ? '접기 ▴' : '펼치기 ▾') + '</span></button>' +
@@ -1642,20 +1661,64 @@
 
   /* ------------------------------------------------------------ 차트 그리기 */
 
+  /* 최고 점수(가장 공포·최대 낙폭) 자리와 오늘 자리 — 폭락 비교(drawDateOverlap)의 오늘 표시와
+     같은 규칙: 세로 점선(4 3) + 점 + 값 라벨. 라벨은 원칙적으로 점 위에 두고,
+     두 점이 화면에서 가까우면(가로·세로 모두) 빨간 라벨만 점 아래로 내려 겹치지 않게 한다.
+     오늘 자리가 곧 최고점이면 점 하나에 고리(빨강)와 "최고·오늘" 라벨을 함께 둔다. */
+  function basisMarks(pts, host, padL, padR, yPix) {
+    var n = pts.length;
+    var maxV = -Infinity, i;
+    for (i = 0; i < n; i++) if (pts[i][1] > maxV) maxV = pts[i][1];
+    var maxI = [];
+    for (i = 0; i < n; i++) if (pts[i][1] >= maxV - 0.05) maxI.push(i);
+    var lastI = n - 1, lastY = pts[lastI][1];
+    var same = (maxV - lastY <= 0.05);
+    /* 화면 픽셀로 어느 만큼 보이는지 — 라벨을 엇을지 정한다 */
+    var iw = Math.max(280, (host && host.clientWidth) || 340) - padL - padR;
+    var hiI = maxI[maxI.length - 1];
+    var px = function (ix) { return padL + (ix / Math.max(1, n - 1)) * iw; };
+    var hNear = Math.abs(px(lastI) - px(hiI)) < 96;
+    var vNear = yPix ? Math.abs(yPix(maxV) - yPix(lastY)) < 18 : false;
+    var day = function (d) { return F.day(d).slice(2); };
+
+    var vl = [], mk = [];
+    if (same) {
+      vl.push({ x: lastI, color: 'var(--green)', dash: '4 3' });
+    } else {
+      vl.push({ x: maxI[0], color: 'var(--red)', dash: '4 3' });
+      if (hiI !== maxI[0]) vl.push({ x: hiI, color: 'var(--red)', dash: '4 3' });
+      vl.push({ x: lastI, color: 'var(--green)', dash: '4 3' });
+    }
+
+    if (same) {
+      /* 오늘 = 최고점 — 빨간 고리 둘레에 초록 점, 라벨 하나로 둘 다 */
+      mk.push({ x: lastI, y: lastY, color: 'var(--red)', r: 6.6, hollow: true });
+      mk.push({ x: lastI, y: lastY, color: 'var(--green)', r: 3.6, bg: true, label: '최고·오늘 ' + F.num(lastY) + ' · ' + day(pts[lastI][0]), dy: 9 });
+    } else {
+      maxI.forEach(function (ix) { mk.push({ x: ix, y: pts[ix][1], color: 'var(--red)', r: 4 }); });
+      mk.push({ x: hiI, y: maxV, color: 'var(--red)', r: 4.6, bg: true,
+        label: '최고 ' + F.num(maxV) + ' · ' + day(pts[hiI][0]), dy: (hNear && vNear) ? -20 : 7 });
+      mk.push({ x: lastI, y: lastY, color: 'var(--green)', r: 4, bg: true,
+        label: '오늘 ' + F.num(lastY), dy: 7 });
+    }
+    return { vlines: vl, markers: mk, maxV: maxV, maxI: maxI, same: same };
+  }
+
   function drawCharts(view, t, monthPts, nowScore) {
     var host = el('#gMonth', view);
     if (host && monthPts.length >= 2) {
       var lo = Math.max(0, Math.min.apply(null, monthPts.map(function (p) { return p[1]; })) - 3);
       var hi = Math.min(100, Math.max.apply(null, monthPts.map(function (p) { return p[1]; })) + 3);
+      var mm = basisMarks(monthPts, host, 46, 16, function (v) { return 22 + (160 - 22 - 26) * (1 - (v - lo) / (hi - lo || 1)); });
       Charts.line(host, {
         height: 160,
+        pad: { l: 46, r: 16, t: 22, b: 26 },
         series: [{ name: '밸류게이지', color: '#6a9ae0', points: monthPts.map(function (p, i) { return [i, p[1]]; }), width: 1.8 }],
         xMin: 0, xMax: monthPts.length - 1, yMin: lo, yMax: hi,
         yTicks: [Math.round(lo), BUY, Math.round(hi)].filter(function (v, i2, arr) { return arr.indexOf(v) === i2; }).sort(function (a, b) { return a - b; }),
         xTicks: [{ x: 0, label: F.day(monthPts[0][0]).slice(5) }, { x: monthPts.length - 1, label: F.day(monthPts[monthPts.length - 1][0]).slice(5) }],
         hlines: [{ y: BUY, color: '#3f8168', label: String(BUY), dash: '4 4' }],
-        markers: [{ x: monthPts.length - 1, y: monthPts[monthPts.length - 1][1], color: '#43b795', r: 3.5,
-          label: '지금 ' + F.num(monthPts[monthPts.length - 1][1]), anchor: 'end' }]
+        vlines: mm.vlines, markers: mm.markers
       });
     } else if (host) {
       host.innerHTML = '<div class="empty">이력이 쌓이는 중입니다.</div>';
@@ -1681,13 +1744,15 @@
       if (!ticks.length || ticks[ticks.length - 1].x !== weekly.length - 1) {
         ticks.push({ x: weekly.length - 1, label: weekly[weekly.length - 1][0].slice(2, 4) + '년' });
       }
+      var fm = basisMarks(weekly, flow, 46, 16, function (v) { return 22 + (180 - 22 - 26) * (1 - (v - 30) / 70); });
       Charts.line(flow, {
         height: 180,
+        pad: { l: 46, r: 16, t: 22, b: 26 },
         series: [{ name: '밸류게이지', color: '#6a9ae0', points: pts, width: 1.7 }],
         xMin: 0, xMax: weekly.length - 1, yMin: 30, yMax: 100,
         yTicks: [30, 60, 80, 100], xTicks: ticks,
         hlines: [{ y: BUY, color: '#3f8168', label: String(BUY), dash: '4 4' }],
-        markers: [{ x: weekly.length - 1, y: weekly[weekly.length - 1][1], color: '#43b795', label: '오늘 ' + F.num(weekly[weekly.length - 1][1]), r: 3.5, anchor: 'end' }]
+        vlines: fm.vlines, markers: fm.markers
       });
     } else if (flow) {
       flow.innerHTML = '<div class="empty">이력이 쌓이는 중입니다.</div>';

@@ -1,9 +1,11 @@
 /* 매수 지표 탭 — 원본 GaugeScreen 배치를 웹으로 옮긴 화면.
    색은 기존 변수만 쓴다(새 색을 정의하지 않는다). 값이 없는 테마를 위해 fallback 만 둔다. */
 .g-card{padding-bottom:14px}
-.g-card .g-head{display:flex;align-items:flex-start;gap:8px;flex-wrap:wrap}
+.g-card .g-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .g-card .g-head h2{margin:0;font-size:16px;letter-spacing:-.2px}
 .g-card .g-head .note{margin:0}
+.g-card .g-head2{display:flex;align-items:center;gap:8px;margin-top:2px}
+.g-card .g-head2 .note{margin:0}
 .g-score{display:flex;align-items:flex-end;gap:8px;margin:6px 0 0}
 .g-score b{font-size:54px;line-height:1;font-weight:800;letter-spacing:-2.5px;font-variant-numeric:tabular-nums}
 .g-score span{font-size:14px;color:var(--tx2);padding-bottom:9px}
@@ -31,8 +33,8 @@
 .g-sub + .g-cap{color:var(--dim);font-size:11.5px;margin:0 0 6px}
 .g-sub.mt{margin-top:16px}
 .g-sec{padding:0;overflow:hidden}
-/* 예전엔 밸류게이지 카드 아래에 기록 섹션이 바로 붙었는데, 지금은 그 자리에 입력 섹션이 온다(2026-11-28) */
-#gRarityNote + .g-sec{margin-top:14px}
+/* 입력 섹션은 밸류게이지 카드(pos·점수·막대) 바로 아래에 온다(2026-11-28) — 카드와 같은 패널 여백으로 이어진다 */
+.g-card + #gTop{margin-top:2px}
 .g-sechead{display:block;width:100%;text-align:left;background:none;border:0;color:inherit;font:inherit;padding:16px 18px;cursor:pointer;min-height:64px}
 .g-sechead:hover{background:rgba(255,255,255,.02)}
 .g-sechead .t{display:flex;align-items:center;gap:8px;font-size:16px;font-weight:700;letter-spacing:-.2px}
@@ -155,11 +157,17 @@ table.tbl tr.focus td{background:rgba(106,154,224,.14)}
   .g-duo .pair b{font-size:14px}
 }
 
+/* 매수 지표 — 밸류게이지 카드 머리 줄 오른쪽에 정규장/프리마켓 토글(증시 탭 위쪽과 같은 모양) */
+.g-baseseg{flex:0 0 auto;margin-left:auto}
+.g-baseseg .tab{min-height:30px;padding:5px 9px}
+.g-hero .g-baseline{margin:6px 0 0;font-size:11.5px;color:var(--dim)}
+
 /* 매수 지표 — 좁은 화면에서 밸류게이지가 첫 화면에 들어오게 제목·설명을 줄인다 */
 @media (max-width:680px){
   .g-hero{padding:10px 14px 6px}
   .g-hero h1{font-size:22px;margin:2px 0 4px}
   .g-hero p{font-size:12px;line-height:1.5;margin:0}
+  .g-hero .g-baseline{font-size:11px;margin:4px 0 0}
   #gTop .g-sechead{padding:13px 14px}
   #gTop .g-sechead .t{font-size:14.5px}
   #gTop .g-six{font-size:11.5px}
