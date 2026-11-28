@@ -2162,8 +2162,8 @@
           ? 'live.json ^NDX ' + idxNum(base.price) + ' · ' + (base.session || '') + ' ' + (base.at || '') +
             ' · 고점 ' + idxNum(base.live.peak) + ' 대비'
           : '^NDX 확정 종가 ' + idxNum(base.price) + ' · ' + F.day(now.as_of) + ' 종가 · 고점 ' + idxNum(now.peak_close) + ' 대비') + '">' +
-        (base.mode === 'live' ? '실시간' : '확정 종가') + ' ' + idxNum(base.price) + ' · 낙폭 ' + F.pct(base.dd, 1) + '</span>';
-    if (base.missing) baseBadge += '<span class="dim small">실시간 값 없음 — 확정 종가 기준</span>';
+        (base.mode === 'live' ? '실시간' : (base.missing ? '확정 종가 기준' : '확정 종가')) + ' ' + idxNum(base.price) + ' · 낙폭 ' + F.pct(base.dd, 1) + '</span>';
+    if (base.missing) baseBadge += '<span class="dim small">실시간 값 없음</span>';
     var avgBadge = showAvg
       ? '<span class="badge" id="scatterAvg" data-n="' + bandN + '" data-avg="' + bandAvg.toFixed(2) +
           '" data-focus="' + focusDd + '" data-band="' + AVG_BAND + '" data-hor="' + analogHorizon + '"' +

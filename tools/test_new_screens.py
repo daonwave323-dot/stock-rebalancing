@@ -306,6 +306,26 @@ def main():
         pg.wait_for_timeout(300)
         pg.screenshot(path=os.path.join(SHOTS, 'verify-scatter-1280.png'))
 
+        # 실시간 값을 못 받은 경우 — 확정 종가 기준이라고 밝힌다(지어내지 않는다)
+        ctxL = b.new_context(viewport={'width': 1280, 'height': 900})
+        pgL = ctxL.new_page()
+        pgL.route('**/data/live.json*', lambda r: r.abort())
+        pgL.route('**/raw.githubusercontent.com/**', lambda r: r.abort())
+        pgL.add_init_script("localStorage.setItem('stockrebal.basis', '\"live\"')")
+        pgL.goto(base + 'index.html#/journal/verify')
+        pgL.wait_for_timeout(2800)
+        lb2 = pgL.evaluate("""() => {
+          const b = document.querySelector('#scatterBase'), a = document.querySelector('#scatterAvg');
+          return {base: b ? b.innerText.split(String.fromCharCode(10)).join(' ') : '',
+                  row: b ? b.parentElement.innerText.split(String.fromCharCode(10)).join(' ') : '',
+                  stillLive: document.querySelector('[data-bs="live"]').classList.contains('on'),
+                  n: a ? a.dataset.n : null};
+        }""")
+        check('산점도: 실시간 값을 못 받으면 확정 종가 기준으로 밝힘',
+              '확정 종가 기준' in lb2['row'] and '실시간 값 없음' in lb2['row'], lb2['row'][:90])
+        check('산점도: 그때도 평균선은 확정 종가 점으로', lb2['n'] is not None and int(lb2['n']) > 0, str(lb2['n']))
+        ctxL.close()
+
         # ---------------------------------------------------------- 도구: 가져오기
         go('#/tools/import', 1000)
         pg.locator('[data-imp-sample]').click()
