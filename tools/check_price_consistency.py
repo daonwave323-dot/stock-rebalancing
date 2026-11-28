@@ -124,19 +124,27 @@ def run(as_json=False):
     rows = []
     for market, syms in (("us", ["^NDX", "QQQ", "SPY", "DIA", "IWM", "SOXX", "^VIX"]),
                          ("kr", ["KOSPI", "KOSDAQ"]),
-                         ("us", EXTRA_SYMBOLS)):
+                         ("us", EXTRA_SYMBOLS),
+                         ("us", ["AAPL", "NVDA"]),
+                         ("kr", ["005930", "000660"])):
         for sym in syms:
-            card = card_value(snap, live, market, sym)
+            if sym in INDEX_SYMBOLS or sym in EXTRA_SYMBOLS:
+                card = card_value(snap, live, market, sym)
+            else:
+                # 종목 — js/market-data.js quote().regPrice / look('regular').price 와 같은 순서
+                l = live_sym(live, sym)
+                s = (snap.get("symbols") or {}).get(sym) or {}
+                price = (l.get("regularClose") if l and l.get("regularClose") is not None
+                         else ((l.get("last") if l and l.get("last") is not None else s.get("price"))))
+                card = {"price": price, "chg": None, "at": None,
+                        "note": "5분 갱신" if (l and l.get("regularClose") is not None) else "스냅샷"}
             cdate, cclose = chart_end(ci, cf, live, sym)
             snapx = snapshot_index(snap, market, sym)
-            if market == "us":
-                l = live_sym(live, sym)
-            else:
-                l = (((live or {}).get("kr") or {}).get("indexes") or {}).get(sym)
+            l = live_sym(live, sym)
             rows.append({
                 "market": market,
                 "sym": sym,
-                "snap": snapx.get("price") if snapx else None,
+                "snap": snapx.get("price") if snapx else ((snap.get("symbols") or {}).get(sym) or {}).get("price"),
                 "snap_at": snap.get("asOf"),
                 "live": (l.get("regularClose") if l else None),
                 "live_at": (l.get("regularCloseDate") or (l.get("regularCloseTime") or "")[:10]) if l else None,

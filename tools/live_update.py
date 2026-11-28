@@ -313,7 +313,12 @@ def kr_clock(now_kst, state=""):
 
 
 def naver_names(codes):
-    """국내 종목 한글 이름 — 네이버 시세 응답(키 없음, 한 번에 여러 종목). 실패하면 빈 dict."""
+    """국내 종목 한글 이름·시세 — 네이버 시세 응답(키 없음, 한 번에 여러 종목). 실패하면 빈 dict.
+
+    이름만 쓰던 자리인데, 국내 가격도 이 값으로 맞춘다 — 증시 스냅샷(data/market.json)의 국내 시세가
+    같은 네이버 목록에서 오기 때문에, live.json 이 야후 값을 쓰면 같은 종목이 화면에 따라
+    179,100/179,500 처럼 0.2%씩 다르게 보인다(야후 국내 시세는 종가가 조금 다른 값을 준다).
+    """
     out = {}
     if not codes:
         return out
@@ -321,11 +326,33 @@ def naver_names(codes):
         req = urllib.request.Request(NAVER_KR + ",".join(codes),
                                      headers={"User-Agent": UA, "Accept": "application/json"})
         js = json.loads(urllib.request.urlopen(req, timeout=12).read())
+
+        def fnum(v):
+            if v is None:
+                return None
+            try:
+                return float(str(v).replace(",", ""))
+            except ValueError:
+                return None
+
         for d in js.get("datas") or []:
             code = str(d.get("itemCode") or "")
-            if code:
-                out[code] = {"name": d.get("stockName"),
-                             "suffix": ((d.get("stockExchangeType") or {}).get("code") or "")}
+            if not code:
+                continue
+            px = fnum(d.get("closePrice"))
+            prev = fnum(d.get("compareToPreviousClosePrice"))
+            if px is not None and prev is not None:
+                prev = px - prev if str((d.get("compareToPreviousPrice") or {}).get("name")) == "RISING" \
+                    else px + prev
+            out[code] = {"name": d.get("stockName"),
+                         "suffix": ((d.get("stockExchangeType") or {}).get("code") or ""),
+                         "price": px,
+                         "prev": prev,
+                         "chg": fnum(d.get("fluctuationsRatio")),
+                         "vol": fnum(d.get("accumulatedTradingVolume")),
+                         "mcap": fnum(d.get("marketValueFullRaw")) or fnum(d.get("marketValueFull")),
+                         "tradedAt": d.get("localTradedAt"),
+                         "state": d.get("marketStatus")}
     except Exception:
         return out
     return out
@@ -870,6 +897,41 @@ def yahoo_key(key, info=None):
     return key
 
 
+NAVER_SISE = "https://api.finance.naver.com/siseJson.naver"
+
+
+def naver_daily(key, years=5):
+    """국내 봉 — 네이버 일봉(시가·고가·저가·종가·거래량). 키가 필요 없다.
+
+    국내 종가·지수를 야후에서 받으면 같은 날 종가가 네이버(스냅샷·live 값의 출처)와 0.2% 안팰에서
+    달라, 카드 숫자와 미니차트·큰 차트 마지막 봉이 서로 다른 값을 가리킨다. 국내는 한 출처로 모은다.
+    """
+    start = datetime.now(tz=timezone.utc) - timedelta(days=365 * years + 30)
+    url = ("%s?symbol=%s&requestType=1&startTime=%s&endTime=%s&timeframe=day"
+           % (NAVER_SISE, urllib.parse.quote(key),
+              start.strftime("%Y%m%d"), datetime.now(tz=timezone.utc).strftime("%Y%m%d")))
+    req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "application/json"})
+    raw = urllib.request.urlopen(req, timeout=25).read().decode("utf-8", "replace")
+    raw = raw.replace("'", '"')
+    arr = json.loads(raw)
+    out = []
+    for r in arr:
+        if not isinstance(r, list) or len(r) < 6 or not re.match(r"^\d{8}$", str(r[0])):
+            continue
+        d = str(r[0])
+        try:
+            out.append([d[:4] + "-" + d[4:6] + "-" + d[6:],
+                        float(r[1]), float(r[2]), float(r[3]), float(r[4]), float(r[5])])
+        except (TypeError, ValueError):
+            continue
+    out.sort(key=lambda x: x[0])
+    return out
+
+
+def is_kr_key(key):
+    return key in ("KOSPI", "KOSDAQ") or bool(re.fullmatch(r"\d{6}", key or ""))
+
+
 def refresh_candles(root, out_path):
     """봉 파일의 심볼을 야후 일봉(range=5y)으로 다시 받는다.
 
@@ -897,21 +959,31 @@ def refresh_candles(root, out_path):
     fx = Fetcher()
     pairs, failed = {}, []
     for key in keys:
-        ys = yahoo_key(key, info.get(key))
-        tries = [ys]
-        if re.fullmatch(r"\d{6}", key or ""):
-            tries.append(key + (".KQ" if ys.endswith(".KS") else ".KS"))
         bars = []
-        for sym in tries:
+        if is_kr_key(key):
+            # 국내는 네이버 일봉 한 곳으로 — 스냅샷·5분 값과 같은 출처여야 카드·차트가 같은 종가를 가리킨다.
             try:
-                js = fx.chart(sym, rng="5y", interval="1d")
-                bars = ohlc_rows(js)
-                if len(bars) >= 60:
-                    break
-                bars = []
+                bars = naver_daily(key)
+                if len(bars) < 60:
+                    bars = []
             except Exception as e:  # noqa: BLE001
-                print("  봉 실패", key, sym, str(e)[:80], file=sys.stderr)
+                print("  봉 실패", key, "naver", str(e)[:80], file=sys.stderr)
                 bars = []
+        if not bars:
+            ys = yahoo_key(key, info.get(key))
+            tries = [ys]
+            if re.fullmatch(r"\d{6}", key or ""):
+                tries.append(key + (".KQ" if ys.endswith(".KS") else ".KS"))
+            for sym in tries:
+                try:
+                    js = fx.chart(sym, rng="5y", interval="1d")
+                    bars = ohlc_rows(js)
+                    if len(bars) >= 60:
+                        break
+                    bars = []
+                except Exception as e:  # noqa: BLE001
+                    print("  봉 실패", key, sym, str(e)[:80], file=sys.stderr)
+                    bars = []
         if bars:
             pairs[key] = cp.slim(bars)
             daily, weekly = pairs[key]
@@ -1151,9 +1223,43 @@ def main(argv=None):
             try:
                 nm = (names.get(code) or {}).get("name") or name_ko
                 rec = kr_record(now_kst, sym, q, meta, nm)
+                # 가격·등락·거래량·시총은 네이버 값을 쓴다 — 증시 스냅샷(국내)과 같은 출처여야
+                # 같은 종목이 화면에 따라 다른 종가(야후는 0.2% 안팰에서 다름)를 보이지 않는다.
+                nv = names.get(code) or {}
+                if nv.get("price") is not None:
+                    px = round(float(nv["price"]), 2)
+                    rec["last"] = px
+                    rec["regularClose"] = px
+                    if rec.get("session") == "regular":
+                        rec["sessionPrice"] = px
+                    if nv.get("prev") is not None:
+                        rec["previousClose"] = round(float(nv["prev"]), 2)
+                    if nv.get("chg") is not None:
+                        c = round(float(nv["chg"]), 3)
+                        rec["changePct"] = c
+                        rec["regularChangePct"] = c
+                        if rec.get("session") == "regular":
+                            rec["sessionChangePct"] = c
+                    if nv.get("vol") is not None:
+                        rec["volume"] = int(nv["vol"])
+                    if nv.get("mcap"):
+                        rec["marketCap"] = nv["mcap"]
+                        rec["marketCapCurrency"] = "KRW"
+                        rec["marketCapText"] = cap_text(nv["mcap"], "KRW")
+                    if nv.get("tradedAt"):
+                        try:
+                            ts2 = int(datetime.fromisoformat(nv["tradedAt"]).timestamp())
+                            rec["lastTimeKst"] = kst_label(ts2)
+                            rec["regularCloseKst"] = kst_label(ts2)
+                            rec["regularCloseDate"] = nv["tradedAt"][:10]
+                            if rec.get("session") == "regular":
+                                rec["sessionKst"] = kst_label(ts2)
+                        except ValueError:
+                            pass
+                    rec["source"] = "naver(국장)"
                 if rec.get("last") is None:
                     raise RuntimeError("값 없음")
-                suf = (names.get(code) or {}).get("suffix")
+                suf = nv.get("suffix")
                 if suf:
                     rec["suffix"] = suf
                 kr_syms[sym] = rec
