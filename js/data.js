@@ -3,7 +3,7 @@
   'use strict';
 
   var D = {
-    scores: null, crashes: null, analog: null, readings: null, ready: false
+    scores: null, crashes: null, crashesSox: null, analog: null, readings: null, ready: false
   };
 
   function getJSON(path) {
@@ -18,9 +18,10 @@
       getJSON('data/scores.json'),
       getJSON('data/crashes.json'),
       getJSON('data/analog.json'),
-      getJSON('data/readings.json')
+      getJSON('data/readings.json'),
+      getJSON('data/crashes_sox.json').catch(function () { return null; })
     ]).then(function (a) {
-      D.scores = a[0]; D.crashes = a[1]; D.analog = a[2]; D.readings = a[3];
+      D.scores = a[0]; D.crashes = a[1]; D.analog = a[2]; D.readings = a[3]; D.crashesSox = a[4];
       D.ready = true;
       return D;
     });
@@ -70,14 +71,62 @@
     };
   };
 
-  /* '지금' 지표 */
+  /* '지금' 지표 — 나스닥(^NDX) 기준 */
   D.now = function () { return D.crashes.now; };
 
+  /* 폭락 자료 한 벌 — 대상에 따라 나스닥(6사례·^NDX) / 반도체(8사례·SOX).
+     화면은 이 함수만 거쳐 대상을 바꾸므로, 두 벌의 틀(표·카드·차트)이 같다. */
+  D.crashSet = function (t) {
+    if (t === 'sox' && D.crashesSox) return D.crashesSox;
+    return D.crashes;
+  };
+
+  /* 지금 지표 — 대상별(나스닥 ^NDX / 반도체 ^SOX). 필드 이름은 두 벌이 같다. */
+  D.nowFor = function (t) {
+    if (t === 'sox' && D.crashesSox) {
+      var n = D.crashesSox.now, m = D.crashesSox.cur_metrics || {};
+      return {
+        as_of: n.as_of, source: '야후 ^SOX 일봉 종가', index: 'SOX', close: n.close,
+        dd: n.dd_now, peak_date: n.peak, peak_close: n.peak_close,
+        trough: n.trough, trough_close: n.trough_close,
+        dd_trough: n.dd, days_since_trough: n.days_since_trough, months: n.months_since_peak,
+        above_trough: n.above_trough,
+        offset: n.days_since_peak || (n.lastI - n.peakI),
+        gap: m.gap, rsi: m.rsi, vix: m.vix,
+        vix_ratio: m.vix_ratio, vix_pct: m.vix_pct,
+        window_note: '^SOX 일봉 종가(야후 파이낸스)로 계산했습니다. 고점 ' + n.peak + ' → ' + n.as_of + '까지 ' +
+          (n.lastI - n.peakI) + '거래일 · 저점 ' + n.trough + '(고점 대비 ' + (n.dd) + '%)'
+      };
+    }
+    return D.crashes.now;
+  };
+
+  /* 2단계 업황·금리 브레이크 — 반도체에만 있다(나스닥은 null) */
+  D.brake = function (t) {
+    return (t === 'sox' && D.crashesSox) ? D.crashesSox.brake : null;
+  };
+
+  /* 90점 단독 vs 2단계 필터 백테스트 — 반도체에만 */
+  D.backtest = function (t) {
+    return (t === 'sox' && D.crashesSox) ? D.crashesSox.backtest : null;
+  };
+
   D.caseById = function (id) {
-    var cases = D.crashes.cases;
-    for (var i = 0; i < cases.length; i++) if (cases[i].id === id) return cases[i];
+    var sets = [D.crashes.cases, (D.crashesSox && D.crashesSox.cases) || []];
+    for (var s = 0; s < sets.length; s++) {
+      for (var i = 0; i < sets[s].length; i++) if (sets[s][i].id === id) return sets[s][i];
+    }
     return null;
   };
+
+  /* 그 사례가 어느 벌(나스닥/반도체)인지 — 상세 페이지의 이전·다음·목록 주소가 이걸 따른다 */
+  D.caseSet = function (id) {
+    if (D.crashesSox) {
+      for (var i = 0; i < D.crashesSox.cases.length; i++) if (D.crashesSox.cases[i].id === id) return D.crashesSox;
+    }
+    return D.crashes;
+  };
+  D.caseTarget = function (id) { return D.caseSet(id) === D.crashesSox ? 'sox' : 'ndx'; };
 
   /* 지금 낙폭과 가장 닮은 사례(전 사례 중 거리 최소) */
   D.closestCase = function () {

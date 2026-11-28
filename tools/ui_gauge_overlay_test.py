@@ -150,14 +150,21 @@ def main():
         check('현재 점이 마지막 확정 점에서 수직 낙하하지 않는다(±3%p 안)', gap < 3, round(gap, 2))
         pg.screenshot(path=os.path.join(SHOTS, 'gauge-390-overlay.png'))
 
-        # TQQQ↔SOXL을 바꿔도 현재 값 고정
+        # 대상 칩을 바꾸면 폭락 비교도 그 대상의 자료로 바뀐다(2026-11-28 반도체 리뉴얼)
+        #   나스닥 = ^NDX 6사례 · 현재 낙폭 ^NDX / 반도체 = SOX 8사례 · 현재 낙폭 ^SOX(자료값)
         before = pg.inner_text('#ovNowDd')
         pg.click('[data-target="sox"]')
         pg.wait_for_timeout(700)
         after = pg.inner_text('#ovNowDd')
-        check('대상 칩을 바꿔도 현재 낙폭 그대로', before == after, (before, after))
+        soxNow = json.load(open(os.path.join(ROOT, 'data', 'crashes_sox.json'), encoding='utf-8'))['now']['dd_now']
+        check('반도체로 바꾸면 현재 낙폭이 ^SOX 값으로 바뀐다', after == '%+.1f%%' % soxNow, (before, after, soxNow))
+        chipsS = pg.evaluate("()=>[...document.querySelectorAll('[data-ovcase]')].map(b=>b.getAttribute('data-ovcase'))")
+        check('반도체로 바꾸면 겹쳐 보기 사례 칩이 SOX 8사례', chipsS == ['sox-1996', 'sox-1998', 'sox-2000', 'sox-2004', 'sox-2008', 'sox-2020', 'sox-2022', 'sox-2025'], chipsS)
         pg.click('[data-target="ndx"]')
         pg.wait_for_timeout(600)
+        back = pg.inner_text('#ovNowDd')
+        chipsN = pg.evaluate("()=>[...document.querySelectorAll('[data-ovcase]')].map(b=>b.getAttribute('data-ovcase'))")
+        check('나스닥으로 돌아오면 현재 낙폭·사례 칩이 원래대로', back == before and len(chipsN) == 6, (back, before, len(chipsN)))
 
         # ---------------------------------------------------- 4) 현재 토글
         pg.click('[data-ovtoday]')

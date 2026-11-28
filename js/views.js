@@ -405,6 +405,10 @@
       var lr = liveRows(key);
       var score = lr ? lr.score : s.score;
       var verdict = lr && w.GaugeMath ? GaugeMath.verdictOf(score) : s.verdict;
+      /* 반도체만 2단계 브레이크 — 90점을 넘어도 업황 자리가 아니면 '매수' 대신 '경보'(매수 지표와 같은 판정) */
+      var br = (w.Data && Data.brake) ? Data.brake(key) : null;
+      var warn = !!(br && score >= 90 && !br.pass);
+      if (warn) verdict = { label: '90점 돌파 · 경보', sub: '업황·금리 확인 전에는 매수가 아닙니다' };
       var rows = lr ? lr.rows : s.rows;
       var bars = rows.map(function (r) {
         var c = (r.converted === null || r.converted === undefined) ? 0 : r.converted;
@@ -412,13 +416,25 @@
           '<span class="track"><i class="' + (c >= 90 ? 'hi' : '') + '" style="width:' + Math.max(0, Math.min(100, c)) + '%"></i></span>' +
           '<b>' + (r.converted === null || r.converted === undefined ? '—' : F.num(r.converted)) + '</b></li>';
       }).join('');
+      /* 2단계 브레이크 한 줄 — 매수 지표 카드와 같은 값·같은 자료(data/crashes_sox.json) */
+      var brakeLine = '';
+      if (br) {
+        var sn = (w.Data && Data.nowFor) ? Data.nowFor(key) : null;
+        brakeLine = '<p class="note" style="margin:6px 0 0">' +
+          '<b>2단계 · 업황·금리</b> ' + (br.pass ? '<span class="badge good">조건 충족</span>' : '<span class="badge amber">경보 유지</span>') +
+          '<br>SOX 고점 대비 ' + F.pct(br.dd, 1) + ' (' + (br.band ? '바닥권 −35~−53%' : '바닥권 아님') + ')' +
+          ' · 경과 ' + F.num(br.months, 1) + '개월 (' + (br.dur_ok ? '8~14개월 구간' : '8~14개월 전') + ')' +
+          (sn ? ' · 고점 ' + F.day(sn.peak_date) + ' → 저점 ' + F.day(sn.trough) : '') + '</p>';
+      }
       return '<article class="score-card ' + cls + '">' +
         '<header><span class="sym">' + esc(s.symbol) + '</span><span class="ttl">' + esc(s.label) + '</span>' +
-          (lr ? '<span class="badge live" style="margin-left:auto">프리마켓(추정)</span>' : '') + '</header>' +
+          (lr ? '<span class="badge live" style="margin-left:auto">프리마켓(추정)</span>' : '') +
+          (warn ? '<span class="badge amber" style="margin-left:auto">경보</span>' : '') + '</header>' +
         '<div class="score-big">' + F.num(score) + '<small>/ 100</small></div>' +
         '<div class="verdict"><b>' + esc(verdict.label) + '</b><span>' + esc(verdict.sub) + '</span></div>' +
         '<div class="meter"><i style="width:' + score + '%"></i></div>' +
         '<ul class="bars">' + bars + '</ul>' +
+        brakeLine +
         '<a class="btn ghost sm" href="#/gauge">지표 자세히 →</a>' +
         '</article>';
     }
@@ -912,6 +928,43 @@
   }
 
   /* ------------------------------------------------------------ 점수 상세 */
+  /* 반도체 2단계 브레이크 — 점수 상세(#/score/sox)에서도 매수 지표와 같은 값·같은 판정을 보여 준다.
+     값은 data/crashes_sox.json(실제 ^SOX 일봉 계산). 형식은 이 화면의 다른 패널과 같은 panel·kv·tbl. */
+  function soxBrakePanel() {
+    var b = (w.Data && Data.brake) ? Data.brake('sox') : null;
+    if (!b) return '';
+    var n = Data.nowFor('sox');
+    var bt = Data.backtest('sox');
+    function row(name, cell) {
+      return '<tr><td>' + name + '</td>' +
+        '<td class="mono">' + cell.n + (cell.done !== null && cell.done !== undefined && cell.done !== cell.n ? ' <span class="dim small">(완결 ' + cell.done + ')</span>' : '') + '</td>' +
+        '<td class="mono ' + (cell.mean === null ? 'dim' : (cell.mean < 0 ? 'neg' : 'pos')) + '">' + (cell.mean === null ? '—' : F.pct(cell.mean, 2)) + '</td>' +
+        '<td class="mono">' + (cell.win === null ? '—' : F.num(cell.win, 1) + '%') + '</td></tr>';
+    }
+    var A = bt.filterA['213'], B = bt.filterB['213'], P = bt.plain['213'];
+    return '<div class="panel">' +
+      '<div class="panel-h"><h2>2단계 · 업황·금리 브레이크</h2>' +
+        '<span class="badge ' + (b.pass ? 'good' : 'amber') + '">' + (b.pass ? '조건 충족' : '경보 유지') + '</span></div>' +
+      '<dl class="kv">' +
+        '<div><dt>① SOX 고점 대비 낙폭</dt><dd class="neg">' + F.pct(b.dd, 1) + ' <small>' + (b.band ? '바닥권 −35~−53%' : '바닥권 아님') + '</small></dd></div>' +
+        '<div><dt>② 하락 경과</dt><dd>' + F.num(b.months, 1) + '개월 <small>' + (b.dur_ok ? '8~14개월 구간' : '보고서 기준 8~14개월 전') + '</small></dd></div>' +
+        '<div><dt>SOX 고점 → 지금</dt><dd>' + F.day(n.peak_date) + ' ' + F.fixed(n.peak_close, 2) + ' → ' + F.fixed(n.close, 2) + '</dd></div>' +
+        '<div><dt>SOX 저점</dt><dd>' + F.day(n.trough) + ' ' + F.fixed(n.trough_close, 2) + ' <small>' + F.pct(n.dd_trough, 1) + '</small></dd></div>' +
+      '</dl>' +
+      '<p class="note">③ 반도체 90점은 매수 신호가 아닌 경보입니다 — +21거래일 평균 +8.68% · 승률 59.1%(전체 거래일 58.9%와 유사). 금리 방향과 업황을 함께 보세요. ' +
+        '점수는 원강 님 앱 계산식 그대로이고, 이 브레이크는 그 위에 얹어 90점을 넘어도 판정을 경보로 내립니다.</p>' +
+      '<div class="tbl-wrap" style="margin-top:8px"><table class="tbl"><thead><tr><th>백테스트 구간</th><th>건수</th><th>+21거래일 평균</th><th>승률</th></tr></thead><tbody>' +
+        row('90점 단독 <span class="dim small">— 보고서(2026-11-20)</span>', { n: 24, done: 22, mean: 8.68, win: 59.1 }) +
+        row('90점 단독 <span class="dim small">— 이 사이트 재계산</span>', P) +
+        row('필터 A · 90점 + SOX −35% 이상 하락', A) +
+        row('필터 B · 필터 A + 하락 6개월 이상', B) +
+        row('전체 거래일 <span class="dim small">— 아무 날이나 산 경우</span>', { n: bt.all_days.n, done: bt.all_days.n, mean: bt.all_days.mean, win: bt.all_days.win }) +
+      '</tbody></table></div>' +
+      '<p class="note">필터 A는 ' + A.n + '건(완결 ' + A.done + '건)만 남아 <b>참고용</b>입니다. 그래도 +21거래일 평균 ' + F.pct(P.mean, 2) + ' → ' + F.pct(A.mean, 2) + ', 승률 ' + F.num(P.win, 1) + '% → ' + F.num(A.win, 1) + '%로 방향은 개선됩니다. ' +
+        '자세한 계산식·걸러진 날은 <a href="#/gauge">매수 지표 → 반도체 SOXL</a>에 있습니다.</p>' +
+      '</div>';
+  }
+
   V.score = function (view, arg) {
     if (arg === 'ndx' || arg === 'sox') scoreTab = arg;
     var s = Data.scores.targets[scoreTab];
@@ -971,6 +1024,8 @@
         '</div>' +
         '<div style="margin-top:14px">' + ladderHtml + '</div>' +
       '</div>' +
+
+      (scoreTab === 'sox' ? soxBrakePanel() : '') +
 
       '<div class="panel">' +
         '<div class="panel-h"><h2>지표 여섯</h2><span class="note">값 → 변환값(0~100) → 기여도(변환값 × 가중치)</span></div>' +
@@ -2220,7 +2275,7 @@
     view.innerHTML =
       (opts.embedded ? '' : '<section class="hero"><div class="crumb"><a href="#/">홈</a> / <a href="#/journal">기록</a> / 검증 기록</div>' +
         '<h1>검증 기록</h1>' +
-        '<p>사례마다 지금과 가장 닮은 하루를 찾아 그 뒤를 봅니다. 같은 낙폭으로도, 같은 경과일로도 값이 다르니 두 눈금을 같이 보세요.</p>' +
+        '<p><b>나스닥 ^NDX 기준</b>입니다 — 사례마다 지금과 가장 닮은 하루를 찾아 그 뒤를 봅니다. 같은 낙폭으로도, 같은 경과일로도 값이 다르니 두 눈금을 같이 보세요. (반도체 SOX 8사례는 <a href="#/gauge">매수 지표</a>에서 반도체 SOXL을 고르면 나옵니다.)</p>' +
         '<p class="byline">글 · Verdictjang</p></section>') +
 
       '<div class="panel">' +

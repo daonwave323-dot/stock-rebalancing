@@ -39,6 +39,18 @@
   /* 화면 값 한 벌의 캐시 — 대상·기준(정규장/프리마켓)·모드(자동/수동)가 바뀌면 새로 만든다 */
   var CUR = { key: null, values: null };
   var crashScale = 'peak';
+  /* 폭락 비교가 지금 어느 대상을 보는가 — 'ndx'(나스닥 ^NDX 6사례) / 'sox'(반도체 SOX 8사례).
+     표·카드·겹쳐 보기·상세 페이지가 모두 이 한 값으로 자료 한 벌을 고른다(같은 틀, 다른 자료). */
+  var CT = 'ndx';
+  function cset(t, id) {
+    if (id && w.Data && Data.caseTarget) return Data.crashSet(Data.caseTarget(id));
+    return (w.Data && Data.crashSet) ? Data.crashSet(t) : Data.crashes;
+  }
+  function cnow(t) { return (w.Data && Data.nowFor) ? Data.nowFor(t) : Data.now(); }
+  function cname(t) { return t === 'sox' ? '^SOX' : '^NDX'; }
+  function cindexName(t) { return t === 'sox' ? 'SOX' : '나스닥100'; }
+  /* '현재' 상세 주소 — 반도체는 #/gauge/crash/sox-now 로 따로 둔다(같은 틀, 다른 자료) */
+  function nowId(t) { return t === 'sox' ? 'sox-now' : 'now'; }
 
   /* ------------------------------------------------------------ 계산(원본과 같은 식) */
 
@@ -80,6 +92,123 @@
   }
 
   function badgeOf(s) { return s >= BUY ? '매수' : (s >= 50 ? '관망' : '신규 매수 아님'); }
+
+  /* ------------------------------------------------------------ 반도체 2단계 브레이크
+   * 보고서 「특이점 점수는 폭락장에서 무엇을 말하는가」(2026-11-28) 결론 — 반도체는
+   * 점수 하나로 바닥을 정하지 않는다. 90점은 매수 신호가 아니라 경보이고(+21거래일 +8.68% · 59.1%,
+   * 전체 거래일 58.9%와 통계적으로 다르지 않음), 업황 사이클(SOX 고점 대비 −35~−53%, 8~14개월)과
+   * 금리 방향을 함께 봐야 한다. 그래서 SOXL 에만 점수 위에 2단계 브레이크를 건다.
+   * 조건 값은 data/crashes_sox.json 의 brake(실제 ^SOX 일봉에서 계산) — 지어낸 값이 없다. */
+  function brakeOf(t) { return (w.Data && Data.brake) ? Data.brake(t) : null; }
+
+  /* 2단계 시뮬레이션 — 수동 입력·지표 조정 때 SOX 낙폭/경과를 내가 넣은 값으로 환산해 본다.
+     · SOX 낙폭 입력(O)이 있으면 그 값을 그대로, 없으면 SOXL 낙폭이 변한 비율만큼 SOX 낙폭을 비례 환산한다
+       (기준: 확정 SOXL 낙폭 → 실제 SOX 낙폭). 단순 비례이고 실제 ^SOX 값이 아니다 — 화면에 '추정'으로 적는다.
+     · 경과 개월은 값에서 유도할 수 없어 입력(기본 = 실제 값)으로 둔다.
+     · 자동 모드로 돌리면 SIM.on 을 끄고 실제 SOX 확정값으로 돌아간다. */
+  var SIM = { on: false, dd: null, months: null, real: false };
+  function simReset() { SIM = { on: false, dd: null, months: null, real: false }; }
+
+  /* 확정 SOXL 낙폭(자료값, %) — 비례 환산의 기준 */
+  function soxBaseDd() {
+    var T = (Data.scores && Data.scores.targets) ? Data.scores.targets.sox : null;
+    if (!T || !T.rows) return null;
+    for (var i = 0; i < T.rows.length; i++) {
+      if (T.rows[i].key === 'dd' && T.rows[i].raw !== null && T.rows[i].raw !== undefined) return Math.abs(T.rows[i].raw);
+    }
+    return null;
+  }
+
+  function brakeState(t, values) {
+    var b0 = brakeOf(t);
+    if (!b0) return null;
+    var o = { dd: b0.dd, months: b0.months, sim: false, real: b0, peak: null, close: null };
+    if (SIM.on) {
+      if (SIM.dd !== null && SIM.dd !== undefined && !isNaN(SIM.dd)) o.dd = -Math.abs(Number(SIM.dd));
+      if (SIM.months !== null && SIM.months !== undefined && !isNaN(SIM.months)) o.months = Number(SIM.months);
+      o.sim = true;
+    } else if (!SIM.real && (ST.mode === 'manual' || ST.edited) && values && values.dd !== null && values.dd !== undefined) {
+      var base = soxBaseDd();
+      if (base && base > 0) { o.dd = -(Math.abs(b0.dd) * Math.abs(values.dd) / base); o.sim = true; }
+    }
+    o.band = (o.dd <= -35 && o.dd >= -53);
+    o.dur_ok = (o.months >= 6);
+    o.pass = o.band && o.dur_ok;
+    return o;
+  }
+
+  /* 판정 — 90점을 넘어도 2단계가 안 갖춰지면 '매수' 대신 '경보'로 내린다 */
+  function verdictFor(t, score, base, values) {
+    var b = brakeState(t, values);
+    if (!b) return base;
+    if (score >= BUY && !b.pass) {
+      return { label: '90점 돌파 · 경보', sub: '업황·금리 확인 전에는 매수가 아닙니다', tone: 'amber', level: 90 };
+    }
+    if (score >= BUY && b.pass) {
+      return { label: base.label, sub: '2단계 조건 충족 — 그래도 90점은 경보에 가깝습니다', tone: base.tone, level: base.level };
+    }
+    return base;
+  }
+
+  function badgeFor(t, score, values) {
+    var b = brakeState(t, values);
+    if (b && score >= BUY && !b.pass) return '경보';
+    return badgeOf(score);
+  }
+
+  /* 2단계 브레이크 블록 — 밸류게이지 카드 안, 다른 카드와 같은 g-sub·g-stat 틀을 쓴다 */
+  function brakeHtml(t, values) {
+    var b = brakeState(t, values);
+    if (!b) return '';
+    var n = cnow(t);
+    var mark = function (ok) { return ok ? '<span class="badge good">충족</span>' : '<span class="badge amber">아직</span>'; };
+    var estClose = (b.sim && n.peak_close > 0) ? n.peak_close * (1 + b.dd / 100) : n.close;
+    return '<div class="g-brake" id="gBrake"' + (b.sim ? ' data-sim="1"' : '') + '>' +
+      '<div class="g-sub" style="margin-top:10px">2단계 · 업황·금리 브레이크 ' + (b.pass ? '<span class="badge good">조건 충족</span>' : '<span class="badge amber">경보 유지</span>') +
+        (b.sim ? ' <span class="badge blue">추정 · 내 입력값</span>' : '') + '</div>' +
+      '<div class="g-stat">① SOX 고점 대비 낙폭 <b class="num">' + F.pct(b.dd, 1) + '</b> ' + mark(b.band) +
+        ' · 바닥권 <b>−35~−53%</b> — 고점 ' + F.day(n.peak_date) + ' ' + F.fixed(n.peak_close, 2) + ' → ' +
+        (b.sim ? '추정 ' : '지금 ') + F.fixed(estClose, 2) + '</div>' +
+      '<div class="g-stat">② 하락 경과 <b class="num">' + F.num(b.months, 1) + '개월</b> ' + mark(b.dur_ok) +
+        ' · 보고서 기준 <b>8~14개월</b> — 저점 ' + F.day(n.trough) + ' ' + F.fixed(n.trough_close, 2) + '(' + F.pct(n.dd_trough, 1) + ') · 저점 뒤 <b>' + F.int(n.days_since_trough) + '거래일</b>째</div>' +
+      '<div class="g-stat">③ 금리·경보 — <b>반도체 90점은 매수 신호가 아닌 경보</b>입니다(+21거래일 평균 +8.68% · 승률 59.1%, 전체 거래일 58.9%와 유사). 금리 방향과 업황을 함께 보세요.</div>' +
+      '<p class="note">' + (b.sim
+        ? '내가 넣은 값으로 환산한 <b>추정</b>입니다(SOX 낙폭은 SOXL 낙폭이 변한 비율만큼 단순 비례). 실제 ^SOX 값이 아니며, 자동으로 돌리면 실제 값으로 돌아갑니다.'
+        : '점수(여섯 지표)는 원강 님 앱 계산식 그대로입니다. 이 브레이크는 그 위에 얹어 90점을 넘어도 업황 자리가 아니면 판정을 "경보"로 내립니다. 두 조건은 ^SOX 일봉(1995~)에서 직접 계산했습니다 — 고점은 5년 최고 종가, 경과는 그 고점 날짜부터 오늘까지 거래일/21입니다.') + '</p>' +
+    '</div>';
+  }
+
+  /* 백테스트 비교 — 희귀도·문턱 통계 뒤에 같은 표 틀(.tbl)로 붙는다 */
+  function backtestHtml(t) {
+    var bt = (w.Data && Data.backtest) ? Data.backtest(t) : null;
+    if (!bt) return '';
+    function row(name, cell, cls) {
+      return '<tr' + (cls ? ' class="' + cls + '"' : '') + '><td>' + name + '</td>' +
+        '<td class="mono">' + cell.n + (cell.done !== null && cell.done !== undefined && cell.done !== cell.n ? ' <span class="dim small">(완결 ' + cell.done + ')</span>' : '') + '</td>' +
+        '<td class="mono ' + (cell.mean === null ? 'dim' : (cell.mean < 0 ? 'neg' : 'pos')) + '">' + (cell.mean === null ? '—' : F.pct(cell.mean, 2)) + '</td>' +
+        '<td class="mono">' + (cell.win === null ? '—' : F.num(cell.win, 1) + '%') + '</td></tr>';
+    }
+    var A = bt.filterA['213'], B = bt.filterB['213'], P = bt.plain['213'], C = bt.plain['63'];
+    var base = bt.all_days;
+    var report = { n: 24, done: 22, mean: 8.68, win: 59.1 };   /* 보고서(2026-11-20 기준) 값 — 대조용 */
+    return '<article class="panel" id="gBacktest">' +
+      '<div class="g-sub">백테스트 — 90점 단독 vs 2단계 필터</div>' +
+      '<div class="g-cap">SOXL 일별 점수 ' + F.day(bt.from) + '~' + F.day(bt.to) + ' · ' + F.int(bt.rows) + '거래일 · +21거래일 = 그 종가에서 21거래일 뒤 종가</div>' +
+      '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>구간</th><th>건수</th><th>+21거래일 평균</th><th>승률</th></tr></thead><tbody>' +
+        row('90점 단독 <span class="dim small">— 보고서(2026-11-20)</span>', report) +
+        row('90점 단독 <span class="dim small">— 이 사이트 재계산</span>', P) +
+        row('필터 A · 90점 + SOX −35% 이상 하락', A, 'sum') +
+        row('필터 B · 필터 A + 하락 6개월 이상', B, 'sum') +
+        row('전체 거래일 <span class="dim small">— 아무 날이나 산 경우</span>', { n: base.n, done: base.n, mean: base.mean, win: base.win }) +
+      '</tbody></table></div>' +
+      '<p class="note">필터 A는 <b>' + A.n + '건</b>만 남습니다(완결 ' + A.done + '건) — 표본이 적어 <b>참고용</b>입니다. ' +
+        '그래도 방향은 보입니다: 건수를 5분의 1로 줄이면서 +21거래일 평균 ' + F.pct(P.mean, 2) + ' → ' + F.pct(A.mean, 2) + ', 승률 ' + F.num(P.win, 1) + '% → ' + F.num(A.win, 1) + '%. ' +
+        '+63거래일은 90점 단독 ' + F.pct(C.mean, 2) + '(' + C.done + '건) · 필터 A ' + F.pct(bt.filterA['63'].mean, 2) + '(' + bt.filterA['63'].done + '건)입니다.</p>' +
+      '<p class="note">걸러진 자리: 필터 A가 남긴 날은 ' + (bt.filterA.dates || []).map(function (d) { return F.day(d); }).join(' · ') + ' — 모두 SOX가 고점 대비 35% 넘게 빠진 뒤였습니다. ' +
+        '나머지 90점 돌파는 대부분 SOX 낙폰이 −35%에 못 미치는 업황 상승기였습니다(2014·2015·2016·2018·2024 등).</p>' +
+      '<p class="note">' + esc(bt.rule) + ' 보고서 값(24건·+8.68%·59.1%)과 이 재계산(25건·' + F.pct(P.mean, 2) + '·' + F.num(P.win, 1) + '%)이 조금 다른 것은 자료 구간(2026-11-20 vs ' + F.day(bt.to) + ')과 조정 방식 차이입니다. 어느 쪽이든 <b>90점 단독은 전체 거래일과 큰 차이가 없습니다</b>.</p>' +
+    '</article>';
+  }
 
   function trim1(v) {
     var s = Number(v).toFixed(1);
@@ -515,8 +644,10 @@
     if (!G.axes) G.axes = AXES;
 
     var t = ST.target, T = G.targets[t];
+    CT = t;   /* 폭락 비교도 같은 대상을 본다 — 반도체면 SOX 8사례 */
     var snap = snapshot(t);
-    var L = snap.L, values = snap.values, result = snap.result, v = snap.verdict, axes = snap.axes;
+    var L = snap.L, values = snap.values, result = snap.result, axes = snap.axes;
+    var v = verdictFor(t, result.score, snap.verdict, values);
     var D = L.detail, S_ = T.stat;
     var meta = liveInfo(t);
     var info = priceInfo(snap);
@@ -543,7 +674,7 @@
       '<article class="panel g-card">' +
         '<div class="g-head"><h2>매수지표 · 밸류게이지</h2><span class="spacer"></span>' + basisSegHtml(snap) + '</div>' +
         '<div class="g-head2"><span class="note">(높을수록 저평가·공포)</span>' +
-          '<span class="badge ' + (result.score >= BUY ? 'good' : 'grey') + '" id="gBadge">' + badgeOf(result.score) + '</span></div>' +
+          '<span class="badge ' + (result.score >= BUY ? (brakeState(t, values) && !brakeState(t, values).pass ? 'amber' : 'good') : 'grey') + '" id="gBadge">' + badgeFor(t, result.score, values) + '</span></div>' +
         '<div class="g-score"><b id="gScore">' + trim1(result.score) + '</b><span>/ ' + BUY + ' 이상 매수</span></div>' +
         '<div class="g-verdict g-tone-' + v.tone + '" id="gVerdict">' + esc(v.label) + '</div>' +
         '<div class="g-verdict-sub" id="gVerdictSub">' + esc(v.sub) + '</div>' +
@@ -554,9 +685,16 @@
           : '매수 구간(' + BUY + ')까지 ' + trim1(BUY - result.score) + '점 남았습니다') + '</div>' +
         '<div class="g-rarity" id="gRarity">🎯 ' + esc(rar ? rar.text : '기록 없음') + '</div>' +
         '<div class="g-contrib" id="gContrib">' + esc(contribText(result)) + '</div>' +
+        brakeHtml(t, values) +
       '</article>';
     /* 희귀도 설명은 입력 머리 한 줄 뒤에 붙인다(2026-11-28 — 카드 바로 다음은 입력 섹션) */
     var rarityNote = '<p class="note" id="gRarityNote">' + rarityNoteHtml(rar, t) + '</p>';
+    /* 반도체만 — 보고서가 실제로 센 수치와 '점수 단독 매수 금지' 안내(나스닥 카드에는 붙지 않는다) */
+    var soxNote = t === 'sox'
+      ? '<p class="note" id="gSoxNote">보고서 기준 — SOXL 90점 돌파 <b>24건</b>(완결 22건), +21거래일 평균 <b>+8.68%</b> · 승률 <b>59.1%</b>. ' +
+        '전체 거래일(+5.41% · 58.9%)과 통계적으로 다르지 않습니다. 나스닥(TQQQ 90점 +15.61% · 78.9%)과 달리 ' +
+        '반도체는 공급·재고 사이클(거미집·채찍·학습효과)이 바닥을 정하므로 <b>점수만으로 매수하지 않습니다</b> — 아래 2단계 브레이크와 함께 보세요.</p>'
+      : '';
 
     /* 4) 문턱 통계 */
     var statBlock =
@@ -618,7 +756,7 @@
       '</article>';
 
     /* 8) 폭락 비교 (접힘) — 차트 묶음 바로 뒤, 화면의 맨 아래 */
-    var crashHtml = crashSectionHtml(detailId);
+    var crashHtml = crashSectionHtml(detailId, t);
 
     var crashOpen = !!ST.open.crash || isCrashPath();
     /* 순서(2026-11-28 무아 님 지시) — 기준 토글은 밸류게이지 카드 머리 줄, 점수 카드 바로 뒤에 입력 머리 한 줄,
@@ -626,22 +764,27 @@
     view.innerHTML =
       '<section class="hero g-hero"><div class="crumb"><a href="#/">홈</a> / 매수 지표</div>' +
         '<h1>매수 지표</h1>' +
-        '<p>여섯 지표를 0~100으로 환산해 가중 평균한 <b>밸류게이지</b>입니다. 높을수록 저평가·공포이고, ' + BUY + ' 이상이면 계획한 투입 구간입니다.</p>' +
+        '<p>여섯 지표를 0~100으로 환산해 가중 평균한 <b>밸류게이지</b>입니다. 높을수록 저평가·공포이고, ' + BUY + ' 이상이면 계획한 투입 구간입니다.' +
+          (t === 'sox' ? ' <b>반도체 SOXL</b>은 여기에 <b>2단계 업황·금리 브레이크</b>를 더 봅니다 — 90점은 매수 신호가 아니라 경보입니다.' : '') + '</p>' +
         '<p class="g-baseline" id="gBaseLine">보는 값 — ' + esc(basisLineText(snap, meta)) + ' · 홈·증시와 같은 기준</p>' +
       '</section>' +
       head +
       gaugeCard +
       topPanel +
       rarityNote +
+      soxNote +
       statBlock +
+      backtestHtml(t) +
       radarCard +
       chartsCard +
       flowCard +
-      section('crash', '폭락 비교', '현재 위치 vs 과거 여섯 사례 · 시간 순. 눌러서 폅니다.', crashHtml, crashOpen);
+      section('crash', '폭락 비교',
+        t === 'sox' ? '현재 위치 vs SOX 8대 폭락장 · 업황 사이클/경제 위기 · 시간 순. 눌러서 폅니다.'
+          : '현재 위치 vs 과거 여섯 사례 · 시간 순. 눌러서 폅니다.', crashHtml, crashOpen);
 
     bind(view, t, detailId);
     drawCharts(view, t, monthPts, result.score);
-    if (crashOpen) drawOverlap(view, Data.crashes.cases);
+    if (crashOpen) drawOverlap(view, cset(t).cases);
     if (detailId) {
       var c = Data.caseById(detailId);
       if (c) drawCrashChart(view, c);
@@ -656,8 +799,9 @@
   var CASE_SCROLLED = null;
 
   function gaugeCaseView(view, id) {
-    if (id === 'now') { nowCaseView(view); return; }
+    if (id === 'now' || id === 'sox-now') { CT = id === 'sox-now' ? 'sox' : 'ndx'; nowCaseView(view); return; }
     var c = Data.caseById(id);
+    if (c && w.Data && Data.caseTarget) CT = Data.caseTarget(id);   /* 이 사례가 속한 벌(나스닥/반도체)로 */
     CRASH_SCROLLED = false;   /* 사례 페이지에서 목록으로 돌아올 때 폭락 비교 자리로 가도록 */
     var crumb = '<div class="crumb"><a href="#/">홈</a> / <a href="#/gauge">매수 지표</a> / <a href="#/gauge/crash">폭락 비교</a>' +
       (c ? ' / ' + esc(c.name) : '') + '</div>';
@@ -697,7 +841,8 @@
   /* '현재' 상세 페이지(#/gauge/crash/now) — 사례 상세와 같은 틀, 값은 현재 기준.
      계산은 확정 종가(Data.scores.index)만 쓰고, 실시간 값은 잠정임을 밝혀 따로 적는다. */
   function nowCaseView(view) {
-    var nc = nowCase();
+    var tt = CT;
+    var nc = nowCase(tt);
     CASE_SCROLLED = 'now';
     var crumb = '<div class="crumb"><a href="#/">홈</a> / <a href="#/gauge">매수 지표</a> / <a href="#/gauge/crash">폭락 비교</a> / 현재</div>';
     if (!nc) {
@@ -715,7 +860,7 @@
       : '미회복';
 
     /* 지금의 여섯 지표와 문턱 대비 위치 — 매수 지표 화면과 같은 snapshot·같은 기준 */
-    var snap = snapshot('ndx');
+    var snap = snapshot(tt);
     var indRows = (snap.result.rows || []).map(function (r) {
       return '<tr><td>' + esc(r.name) + '</td>' +
         '<td class="mono">' + (r.value === null ? '—' : fmtVal(r.key, r.value) + esc(r.unit || '')) + '</td>' +
@@ -726,14 +871,15 @@
       ? '매수 구간(' + BUY + ' 이상)입니다'
       : '매수 문턱(' + BUY + ')까지 ' + trim1(BUY - snap.result.score) + '점 남았습니다';
 
-    var lastCase = casesChrono(Data.crashes.cases).slice(-1)[0];
+    var lastCase = casesChrono(cset(tt).cases).slice(-1)[0];
 
     view.innerHTML =
       '<section class="hero g-hero">' + crumb +
         '<h1>현재</h1>' +
-        '<p>2026 진행 중 · <b>^NDX</b> 기준 · 고점 <b>' + F.day(nc.peak) + '</b> (' + F.fixed(nc.peakClose, 2) + ') → 저점 <b>' + F.day(nc.trough) +
+        '<p>2026 진행 중 · <b>' + cname(tt) + '</b> 기준 · 고점 <b>' + F.day(nc.peak) + '</b> (' + F.fixed(nc.peakClose, 2) + ') → 저점 <b>' + F.day(nc.trough) +
           '</b> (' + F.fixed(nc.troughClose, 2) + ') · 최대 낙폭 <b>' + F.pct(nc.dd, 1) + '</b> · 저점까지 ' + F.int(nc.daysToTrough) + '거래일</p>' +
-        '<p class="byline">기준 = 확정 종가 ' + F.day(nc.closeDate) + ' · 최근 ' + NOW_WIN_MONTHS + '개월(' + F.day(nc.from) + '~' + F.day(nc.to) + ') 창</p>' +
+        '<p class="byline">기준 = 확정 종가 ' + F.day(nc.closeDate) + ' · ' +
+          (tt === 'sox' ? 'SOX 고점(' + F.day(nc.peak) + ')부터 지금까지 ' + F.int(nc.lastI - nc.peakI) + '거래일' : '최근 ' + NOW_WIN_MONTHS + '개월(' + F.day(nc.from) + '~' + F.day(nc.to) + ') 창') + '</p>' +
       '</section>' +
 
       '<article class="panel g-case-detail" id="gNowCase">' +
@@ -763,13 +909,13 @@
         '<div class="row" style="justify-content:space-between;align-items:baseline">' +
           '<div class="g-sub" style="margin:0">지금 여섯 지표 — 매수 문턱 대비</div>' +
           '<span class="badge ' + (snap.result.score >= BUY ? 'good' : 'grey') + '">밸류게이지 ' + trim1(snap.result.score) + ' / ' + BUY + ' 이상 매수</span></div>' +
-        '<p class="note" style="margin:4px 0 8px">나스닥 TQQQ 기준 · ' + scoreTxt + '</p>' +
+        '<p class="note" style="margin:4px 0 8px">' + (tt === 'sox' ? '반도체 SOXL' : '나스닥 TQQQ') + ' 기준 · ' + scoreTxt + '</p>' +
         '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>지표</th><th>값</th><th>0~100 환산</th><th>가중 기여</th></tr></thead><tbody>' +
           indRows + '</tbody></table></div>' +
         '<p class="note">값이 없는 지표는 빼고 남은 가중치 합으로 나눕니다.</p>' +
       '</article>' +
 
-      matchPanelHtml() +
+      matchPanelHtml(tt) +
 
       '<div class="row" style="justify-content:space-between;margin-top:10px">' +
         '<a class="btn ghost sm" href="#/gauge/crash/' + lastCase.id + '">← ' + esc(lastCase.short) + '</a>' +
@@ -875,6 +1021,25 @@
     return '지금 ' + trim1(snap.result.score) + '점 · ' + modeTxt + ' · ' + basisTxt;
   }
 
+  /* 2단계 시뮬레이션 입력 — 반도체만. SOX 낙폭은 SOXL 낙폭 변화에 비례해 환산되고,
+     경과 개월은 값에서 유도할 수 없어 직접 넣는다(기본 = 실제 ^SOX 값). */
+  function simHtml(snap) {
+    if (snap.t !== 'sox') return '';
+    var b = brakeState('sox', snap.values);
+    if (!b) return '';
+    return '<div class="g-ind" style="margin-top:12px" id="gSim">' +
+      '<div class="top"><b>2단계 시뮬레이션 · SOX</b><span class="w">' + (b.sim ? '추정' : '실제 값') + '</span><span class="sp"></span>' +
+        '<button class="btn ghost sm" type="button" id="gSimReset">실제 ^SOX 값 보기</button></div>' +
+      '<div class="row" style="gap:10px;flex-wrap:wrap;margin-top:6px">' +
+        '<label class="g-mini" style="display:flex;align-items:center;gap:6px">SOX 고점 대비 낙폭 ' +
+          '<input type="number" data-sim="dd" step="0.5" min="0" max="95" value="' + Math.abs(b.dd).toFixed(1) + '" aria-label="SOX 고점 대비 낙폭(%)" style="width:80px">%</label>' +
+        '<label class="g-mini" style="display:flex;align-items:center;gap:6px">하락 경과 ' +
+          '<input type="number" data-sim="months" step="0.5" min="0" max="120" value="' + Number(b.months).toFixed(1) + '" aria-label="SOX 하락 경과(개월)" style="width:80px">개월</label>' +
+      '</div>' +
+      '<p class="note">SOXL 낙폭을 바꾸면 그 비율만큼 SOX 낙폭을 비례 환산해 위 2단계 브레이크(바닥권 −35~−53%·8~14개월)를 다시 봅니다. 경과 개월은 값으로 계산할 수 없어 여기서 넣습니다. 자동으로 돌리면 실제 ^SOX 확정값으로 돌아갑니다.</p>' +
+    '</div>';
+  }
+
   function gaugeTopHtml(snap, T, G) {
     var t = snap.t, values = snap.values, result = snap.result;
     var meta = liveInfo(t);
@@ -894,6 +1059,7 @@
         '<button class="btn ghost sm" type="button" id="gIndsBtn" aria-expanded="' + (indsOpen ? 'true' : 'false') + '" style="margin-top:2px">여섯 지표 직접 조작 <span class="mark">' + (indsOpen ? '접기 ▴' : '펼치기 ▾') + '</span></button>' +
         '<div id="gInds"' + (indsOpen ? '' : ' hidden') + '>' + indsHtml(values) + indsTableHtml(result) + '</div>' +
         '<p class="note">슬라이더·숫자로 값을 바꾸면 점수·막대·판정·레이더·오늘 선이 같은 값으로 바로 따라오고, 낙폭·200일선 이격은 위 가격을 거꾸로 다시 계산합니다. RSI·VIX는 과거 시계열이 필요해 가격으로 되돌릴 수 없습니다.</p>' +
+        simHtml(snap) +
       '</div>' +
     '</section>';
   }
@@ -980,7 +1146,12 @@
   /* '현재' 값 — 사례 선과 같은 계열(^NDX 지수 낙폭). 대상(TQQQ·SOXL) 낙폭은 쓰지 않는다.
      live.json 의 ^NDX 시세가 확정 종가와 다르면 그 값(프리마켓·정규장)으로, 같으면 확정 NDX 낙폭으로 둔다.
      기준(정규장/프리마켓) 설정과 상관없이 늘 최신 값을 본다 — 5분 갱신이 이 값을 따라온다. */
-  function ovNowPoint() {
+  function ovNowPoint(t) {
+    t = t || CT;
+    if (t === 'sox' && w.Data && Data.crashesSox) {
+      var sn = Data.crashesSox.now;
+      return { dd: sn.dd_now, src: 'close', label: '확정 종가 · ' + F.day(sn.as_of) + ' · ^SOX ' + F.fixed(sn.close, 2) };
+    }
     var now = Data.now();
     var ddNow = now.dd, src = 'close';
     var label = '확정 종가 · ' + F.day(now.as_of);
@@ -1004,7 +1175,9 @@
    * 좌표 규칙도 사례와 같다: 고점 계열 x=0 이 고점, 저점 계열 x=0 이 저점.
    * 그래서 6개월~3년 창에서 사례들과 같은 밀도로 퍼지고, 현재 선은 지금 점에서 끝난다.
    */
-  function ovToday() {
+  function ovToday(t) {
+    t = t || CT;
+    if (t === 'sox' && w.Data && Data.crashesSox) return Data.crashesSox.now.ov;   /* ^SOX 일봉으로 만든 경로 */
     var now = Data.now();
     var idx = Data.scores.index || [];
     if (!idx.length || !(now.peak_close > 0)) return null;
@@ -1150,7 +1323,7 @@
       return '각 사례를 **실제 날짜** 위치에 놓고 세로는 낙폭 %로. 1929·1987·2000·2008·2020·2025가 시간 순서로 어디에 앉는지 보입니다. ' +
         '가로 위치는 고점 날짜에 거래일(주말 제외)을 더해 잡은 근사값입니다 — 고점·저점 날짜는 자료 그대로입니다.';
     }
-    return '같은 구간을 **낙폭 %** 선형 눈금으로. 사례·현재 모두 ^NDX 지수 낙폭이라 같은 눈금에서 겹쳐집니다. 로그 보기와 달리 깊은 낙폭이 더 크게 보입니다.' + shortEnd;
+    return '같은 구간을 **낙폭 %** 선형 눈금으로. 사례·현재 모두 ' + cname(CT) + ' 지수 낙폭이라 같은 눈금에서 겹쳐집니다. 로그 보기와 달리 깊은 낙폭이 더 크게 보입니다.' + shortEnd;
   }
 
   /* ------------------------------------------------------------ 날짜 축 보기
@@ -1426,8 +1599,8 @@
     /* 차트 위 현재 낙폭 큰 숫자 — 차트의 '현재' 점·선과 같은 값에서 나온다 */
     ovNowBadge(view, showToday, today);
     el('#ovBasis', view).textContent = (showToday
-        ? '현재 — ' + (today ? today.label + ' · ^NDX 낙폭 ' + F.pct(today.dd, 1) : '값 없음(live·확정 모두 없음)')
-        : '현재 선을 껐습니다' + (today ? '(' + today.label + ' · ^NDX 낙폭 ' + F.pct(today.dd, 1) + ')' : '')) +
+        ? '현재 — ' + (today ? today.label + ' · ' + cname(CT) + ' 낙폭 ' + F.pct(today.dd, 1) : '값 없음(live·확정 모두 없음)')
+        : '현재 선을 껐습니다' + (today ? '(' + today.label + ' · ' + cname(CT) + ' 낙폭 ' + F.pct(today.dd, 1) + ')' : '')) +
       ' · 창 = ' + (scale === 'trough' ? '저점' : '고점') + ' 기준 ±' + ovWinText(OV.win) +
       (OV.win > 1 ? ' (사례 자료는 고점 ±1년까지라 끝이 짧을 수 있음)' : '');
   }
@@ -1525,7 +1698,21 @@
      실시간 체결값은 섞지 않는다 — 저점 날짜와 거래일 수가 장중에 흔들리기 때문이다.
      (겹쳐 보기 선만 실시간 값을 끝에 이어 붙이므로, 그 차이는 표 아래 각주에 적는다.) */
   var NOW_WIN_MONTHS = 3;
-  function nowCase() {
+  function nowCase(t) {
+    t = t || CT;
+    /* 반도체 — data/crashes_sox.json 이 ^SOX 일봉으로 미리 계산해 둔 값을 그대로 쓴다(같은 틀의 값) */
+    if (t === 'sox' && w.Data && Data.crashesSox) {
+      var sn = Data.crashesSox.now;
+      return {
+        t: 'sox',
+        from: sn.from, to: sn.to, peakI: sn.peakI, troughI: sn.troughI, lastI: sn.lastI,
+        peak: sn.peak, peakClose: sn.peak_close, trough: sn.trough, troughClose: sn.trough_close,
+        dd: sn.dd, daysToTrough: sn.days_to_trough, daysToRecovery: null,
+        daysSinceTrough: sn.days_since_trough, closeDate: sn.as_of, close: sn.close,
+        ddNow: sn.dd_now, aboveTrough: sn.above_trough, backPct: sn.backPct,
+        chart: sn.chart, analog: closestNowMatch(Data.crashesSox.cases)
+      };
+    }
     var idx = (Data.scores && Data.scores.index) || [];
     if (idx.length < 5) return null;
     var lastI = idx.length - 1, last = idx[lastI];
@@ -1561,6 +1748,7 @@
 
   /* '현재'를 사례 상세와 같은 틀(경로 차트·값)로 그리기 위한 가짜 사례 객체 */
   function nowCaseForChart(nc) {
+    if (nc && nc.chart) return nc.chart;   /* 반도체 — ^SOX 일봉으로 만든 경로를 그대로 */
     var idx = (Data.scores && Data.scores.index) || [];
     if (!nc || !idx.length) return null;
     var prePath = [], path = [], troughPath = [];
@@ -1586,12 +1774,13 @@
   }
 
   /* ── 핵심 표: '현재 ↔ 그 사례의 닮은 날' — 이 화면의 맨 위에 온다 */
-  function matchPanelHtml() {
-    var now = Data.now();
-    var cases = casesChrono(Data.crashes.cases);
+  function matchPanelHtml(t) {
+    t = t || CT;
+    var now = cnow(t);
+    var cases = casesChrono(cset(t).cases);
     var ranks = distRanks(cases);
     var nearest = closestNowMatch(cases);
-    var nc = nowCase();
+    var nc = nowCase(t);
     var ddNow = (nc && nc.ddNow !== null && nc.ddNow !== undefined) ? nc.ddNow : now.dd;
     var basisDay = nc ? nc.closeDate : now.as_of;
 
@@ -1605,6 +1794,7 @@
       return '<tr class="g-crashrow' + (nearest && nearest.c.id === c.id ? ' g-near' : '') + '" data-case="' + c.id + '">' +
         '<td><b style="color:' + c.color + '">■</b> ' + esc(c.name) +
           (rk === 1 ? ' <span class="badge blue">가장 닮음</span>' : '') +
+          (c.type ? '<div class="dim small">' + (c.type === '경제 위기' ? '<span class="badge red">경제 위기</span>' : '<span class="badge blue">업황 사이클</span>') + '</div>' : '') +
           '<div class="dim small">' + F.day(c.peak) + ' → ' + F.day(c.trough) + ' · ' + esc(c.index) + '</div></td>' +
         '<td class="mono">' + (m ? F.day(m.date) + '<div class="dim small">고점 +' + m.day + '일</div>' : '—') + '</td>' +
         fwdCell(m ? m.dd : null) +
@@ -1616,8 +1806,8 @@
 
     /* 현재 행 — 시간 순 맨 끝(최신). 자기 값만 적고, 다른 사례의 수치를 옮겨 적지 않는다. */
     var nowMatchRow = nc
-      ? '<tr class="g-nowrow g-crashrow" data-case="now">' +
-          '<td><b>현재</b> <span class="badge blue">2026</span><div class="dim small">진행 중 · 나스닥100 · 확정 종가 ' + F.day(nc.closeDate) + '</div></td>' +
+      ? '<tr class="g-nowrow g-crashrow" data-case="' + nowId(t) + '">' +
+          '<td><b>현재</b> <span class="badge blue">2026</span><div class="dim small">진행 중 · ' + cindexName(t) + ' · 확정 종가 ' + F.day(nc.closeDate) + '</div></td>' +
           '<td class="mono dim">—</td><td class="mono dim">—</td>' +
           '<td class="mono neg">' + F.pct(ddNow, 1) + '</td>' +
           '<td class="mono dim">—</td><td class="mono dim">—</td><td class="mono dim">—</td>' +
@@ -1644,22 +1834,35 @@
         '</tr></thead><tbody>' + matchRows + nowMatchRow + '</tbody></table></div>' +
         '<p class="note">각 사례 안에서 <b>현재와 지표가 가장 가까운 하루</b>를 골랐습니다. 비교의 두 축은 <b>현재</b>와 <b>그 사례의 그 하루</b>입니다. ' +
           '지표 거리 = 네 지표(낙폭·200일선·RSI·VIX)의 차이를 각 10눈금으로 나눈 평균 — 작을수록 닮았습니다. 옆 숫자는 가까운 순위(1 = 가장 닮은 사례). ' +
-          'VIX가 없던 1929·1987은 세 지표로만 셉니다. 30·90일 = 그 하루 뒤 그만큼 거래일이 지난 뒤 수익률, 자료에 없는 칸은 —입니다. 줄을 누르면 사례 상세가 열립니다.</p>' +
+          'VIX 자료가 없는 사례(1929·1987 · 반도체 1996~2004)는 남은 지표로만 셉니다. 30·90일 = 그 하루 뒤 그만큼 거래일이 지난 뒤 수익률, 자료에 없는 칸은 —입니다. 줄을 누르면 사례 상세가 열립니다.</p>' +
       '</article>';
   }
 
-  function crashSectionHtml(detailId) {
-    var now = Data.now();
-    var cases = casesChrono(Data.crashes.cases);
+  function crashSectionHtml(detailId, t) {
+    t = t || CT;
+    var now = cnow(t);
+    var cases = casesChrono(cset(t).cases);
     var ranks = distRanks(cases);
     var nearest = closestNowMatch(cases);
-    var nc = nowCase();
+    var nc = nowCase(t);
     var basisDay = nc ? nc.closeDate : now.as_of;
+    var isSox = (t === 'sox');
+    /* 유형 배지 — 반도체 8사례만 '업황 사이클 / 경제 위기' 두 갈래를 단다(보고서 2쪽 표와 같은 구분) */
+    function typeBadge(c) {
+      if (!c.type) return '';
+      return ' <span class="badge ' + (c.type === '경제 위기' ? 'red' : 'blue') + '">' + esc(c.type) + '</span>';
+    }
+    var chronoTxt = isSox
+      ? '1996 → 1998 → 2000 → 2004 → 2008 → 2020 → 2022 → 2025 → 현재(2026)'
+      : '1929 → 1987 → 2000 → 2008 → 2020 → 2025 → 현재(2026)';
+    var basisTxt = isSox
+      ? '반도체 SOX는 확정 종가 ' + F.day(now.as_of) + '(야후 ^SOX 일봉)'
+      : '현재 값은 확정 종가만 씁니다';
 
     /* ── 경로 표: 사례 | 고점 → 저점 | 최대 낙폭 | 저점까지 | 회복까지 */
     var pathRows = cases.map(function (c) {
       return '<tr class="g-crashrow" data-case="' + c.id + '">' +
-        '<td><b style="color:' + c.color + '">■</b> ' + esc(c.name) + '<div class="dim small">' + esc(c.tag) + '</div></td>' +
+        '<td><b style="color:' + c.color + '">■</b> ' + esc(c.name) + typeBadge(c) + '<div class="dim small">' + esc(c.tag) + '</div></td>' +
         '<td class="mono">' + F.day(c.peak) + ' <span class="dim">' + F.fixed(c.peak_close, 2) + '</span>' +
           '<div class="dim small">→ ' + F.day(c.trough) + ' <span>' + F.fixed(c.trough_close, 2) + '</span></div></td>' +
         '<td class="mono neg">' + F.pct(c.dd, 1) + '</td>' +
@@ -1673,8 +1876,8 @@
       var recCell = nc.daysToRecovery !== null
         ? F.int(nc.daysToRecovery) + '<div class="dim small">저점 ' + nc.daysSinceTrough + '거래일 뒤 회복</div>'
         : '<b>미회복</b><div class="dim small">저점 ' + F.pct(nc.aboveTrough, 1) + ' · ' + nc.daysSinceTrough + '거래일째</div>';
-      nowPathRow = '<tr class="g-nowrow g-crashrow" data-case="now">' +
-        '<td><b>현재</b> <span class="badge blue">2026</span><div class="dim small">진행 중 · 나스닥100 · 확정 종가 ' + F.day(nc.closeDate) + '</div></td>' +
+      nowPathRow = '<tr class="g-nowrow g-crashrow" data-case="' + nowId(t) + '">' +
+        '<td><b>현재</b> <span class="badge blue">2026</span><div class="dim small">진행 중 · ' + cindexName(t) + ' · 확정 종가 ' + F.day(nc.closeDate) + '</div></td>' +
         '<td class="mono">' + F.day(nc.peak) + ' <span class="dim">' + F.fixed(nc.peakClose, 2) + '</span>' +
           '<div class="dim small">→ ' + F.day(nc.trough) + ' <span>' + F.fixed(nc.troughClose, 2) + '</span></div></td>' +
         '<td class="mono neg">' + F.pct(nc.dd, 1) + '</td>' +
@@ -1687,6 +1890,7 @@
       var m = c.now_match, rk = ranks[c.id];
       return '<a class="case-card' + (nearest && nearest.c.id === c.id ? ' g-nearcard' : '') + '" href="#/gauge/crash/' + c.id + '" style="border-left-color:' + c.color + '">' +
         '<div class="top"><span class="nm">' + esc(c.short) + (rk ? ' <span class="g-rank">' + rk + '위</span>' : '') + '</span><span class="dd">' + F.pct(c.dd, 1) + '</span></div>' +
+        (c.type ? '<div class="meta">' + typeBadge(c).trim() + '</div>' : '') +
         '<div class="meta">' + esc(c.name) + ' · 저점까지 ' + F.int(c.days_to_trough) + '거래일 · 회복 ' + F.int(c.days_to_recovery) + '거래일</div>' +
         (m ? '<div class="meta">' + esc(c.name) + '와 닮은 날 ' + F.day(m.date) + ' (고점 +' + m.day + '일) · 거리 ' + F.num(m.distance, 2) +
           ' · 30일 ' + (m.fwd30 === null || m.fwd30 === undefined ? '—' : F.pct(m.fwd30, 1)) + '</div>' : '') +
@@ -1694,9 +1898,9 @@
     }).join('');
 
     if (nc) {
-      cards += '<a class="case-card g-nowcard" href="#/gauge/crash/now">' +
+      cards += '<a class="case-card g-nowcard" href="#/gauge/crash/' + nowId(t) + '">' +
         '<div class="top"><span class="nm">현재 <span class="badge blue">2026</span></span><span class="dd neg">' + F.pct(nc.dd, 1) + '</span></div>' +
-        '<div class="meta">2026 진행 중 · 최근 3개월 고점 ' + F.day(nc.peak) + ' → 저점 ' + F.day(nc.trough) + '</div>' +
+        '<div class="meta">2026 진행 중 · ' + (isSox ? 'SOX 고점' : '최근 3개월 고점') + ' ' + F.day(nc.peak) + ' → 저점 ' + F.day(nc.trough) + '</div>' +
         '<div class="meta">저점까지 ' + F.int(nc.daysToTrough) + '거래일 · ' +
           (nc.daysToRecovery !== null ? '회복 ' + F.int(nc.daysToRecovery) + '거래일' : '미회복(전고점 ' + F.pct(nc.ddNow, 1) + ')') +
           ' · 확정 종가 ' + F.day(nc.closeDate) + ' → 눌러서 현재 상세</div>' +
@@ -1732,17 +1936,19 @@
         '<div class="tbl-wrap" style="margin-top:8px"><table class="tbl"><thead><tr>' +
           '<th>사례</th><th>고점 → 저점</th><th>최대 낙폭</th><th>저점까지</th><th>회복까지</th>' +
         '</tr></thead><tbody>' + pathRows + nowPathRow + '</tbody></table></div>' +
-        '<p class="note"><b>나열은 고점 날짜 시간 순 하나입니다</b> — 1929 → 1987 → 2000 → 2008 → 2020 → 2025 → 현재(2026). ' +
-          '\'현재\'는 사례로 섞지 않고 맨 끝 최신에 세웠습니다. 현재 값은 확정 종가만 씁니다 — 지수 마지막 종가 ' + F.day(basisDay) +
+        '<p class="note"><b>나열은 고점 날짜 시간 순 하나입니다</b> — ' + chronoTxt + '. ' +
+          '\'현재\'는 사례로 섞지 않고 맨 끝 최신에 세웠습니다. ' + basisTxt + ' — 지수 마지막 종가 ' + F.day(basisDay) +
           (Data.gauge && Data.gauge.as_of ? ' · 점수 산출 기준일 ' + F.day(Data.gauge.as_of) + '(gauge.json)' : '') + '. ' +
-          (nc ? '최근 ' + NOW_WIN_MONTHS + '개월(' + F.day(nc.from) + '~' + F.day(nc.to) + ') 안 최고점 → 그 뒤 최저 종가로 계산했고, 회복은 전고점 종가를 다시 넘은 날입니다.' : '') +
+          (nc ? (isSox
+            ? 'SOX 고점 ' + F.day(nc.peak) + ' → 지금까지 ' + F.int(nc.lastI - nc.peakI) + '거래일, 저점 ' + F.day(nc.trough) + ' 이후 최저 종가로 계산했고, 회복은 전고점 종가를 다시 넘은 날입니다.'
+            : '최근 ' + NOW_WIN_MONTHS + '개월(' + F.day(nc.from) + '~' + F.day(nc.to) + ') 안 최고점 → 그 뒤 최저 종가로 계산했고, 회복은 전고점 종가를 다시 넘은 날입니다.') : '') +
           ' 저점까지·회복까지는 <b>거래일</b> 수입니다.</p>' +
         '<p class="note">겹쳐 보기의 현재 선과 같은 규칙(최근 고점 → 그 뒤 최저 종가)이라 고점·저점·낙폭이 같습니다. ' +
           '그 선만 실시간 체결이 있으면 끝에 그 값을 이어 붙이므로 표의 확정 종가 값과 지금 낙폭이 다를 수 있습니다' + liveNote + '.</p>' +
         '<div class="case-grid" style="margin-top:10px">' + cards + '</div>' +
       '</article>';
 
-    var html = matchPanelHtml() + geoPanel + overlapCard(cases) + pathPanel;
+    var html = matchPanelHtml(t) + geoPanel + overlapCard(cases) + pathPanel;
 
     if (detailId) {
       var c = Data.caseById(detailId);
@@ -1752,8 +1958,10 @@
   }
 
   function crashDetailHtml(c) {
-    var cases = Data.crashes.cases;
-    var navList = casesChrono(cases).concat([{ id: 'now', short: '현재' }]);
+    var cases = (w.Data && Data.caseSet) ? Data.caseSet(c.id).cases : cset(CT).cases;
+    var ct = (w.Data && Data.caseTarget) ? Data.caseTarget(c.id) : CT;
+    var cnowv = cnow(ct);
+    var navList = casesChrono(cases).concat([{ id: nowId(ct), short: '현재' }]);
     var nIdx = -1;
     for (var k = 0; k < navList.length; k++) if (navList[k].id === c.id) nIdx = k;
     var prev = navList[(nIdx - 1 + navList.length) % navList.length];
@@ -1813,17 +2021,17 @@
         '<span class="badge blue">거리 ' + F.num(m.distance, 2) + ' · ' + rankText + '</span></div>' +
         '<p class="sub-line">그 사례 안에서 <b>현재와 지표가 가장 가까운 하루</b>입니다 — ' + F.day(m.date) + ' (고점 +' + m.day + '거래일)</p>' +
         '<div class="tbl-wrap" style="margin-top:8px;border:0"><table class="tbl g-cmp"><thead><tr><th>지표</th><th>현재</th><th>' + F.day(m.date) + '</th><th>차이</th></tr></thead><tbody>' +
-          cmpRow('고점 대비 낙폭', Data.now().dd, m.dd, 1, '%') +
-          cmpRow('200일선 이격', Data.now().gap, m.gap, 1, '%') +
-          cmpRow('일간 RSI(14)', Data.now().rsi, m.rsi, 1, '') +
-          cmpRow('VIX', Data.now().vix, m.vix, 2, '') +
+          cmpRow('고점 대비 낙폭', cnowv.dd, m.dd, 1, '%') +
+          cmpRow('200일선 이격', cnowv.gap, m.gap, 1, '%') +
+          cmpRow('일간 RSI(14)', cnowv.rsi, m.rsi, 1, '') +
+          cmpRow('VIX', cnowv.vix, m.vix, 2, '') +
         '</tbody></table></div>' +
         '<dl class="kv" style="margin-top:10px">' +
           '<div><dt>그 날 이후 30거래일</dt><dd class="' + (m.fwd30 !== null && m.fwd30 < 0 ? 'neg' : 'pos') + '">' + F.pct(m.fwd30, 1) + '</dd></div>' +
           '<div><dt>90거래일</dt><dd class="' + (m.fwd90 !== null && m.fwd90 < 0 ? 'neg' : 'pos') + '">' + F.pct(m.fwd90, 1) + '</dd></div>' +
           '<div><dt>180거래일</dt><dd class="' + (m.fwd180 !== null && m.fwd180 < 0 ? 'neg' : 'pos') + '">' + F.pct(m.fwd180, 1) + '</dd></div>' +
         '</dl>' +
-        '<p class="sub-line" style="margin-top:8px">같은 경과일(지금 = 고점 +' + Data.now().offset + '거래일)에서 이 사례의 낙폭은 ' +
+        '<p class="sub-line" style="margin-top:8px">같은 경과일(지금 = 고점 +' + cnowv.offset + '거래일)에서 이 사례의 낙폭은 ' +
           (c.sameDay === null || c.sameDay === undefined ? '—' : F.pct(c.sameDay, 1)) + ' 입니다.</p>' +
         '<div class="notice"><b>닮은 지점은 \'그때 이랬다\'만 알려줍니다.</b> \'그래서 그다음에 왜 그렇게 됐는지\'는 알려주지 않습니다.' +
           (m.metricsUsed < 4 ? '<div class="dim small" style="margin-top:4px">이 사례는 원본 자료에 VIX가 없어 <b>세 지표로만</b> 거리를 쟀습니다.</div>' : '') + '</div>' +
@@ -1999,7 +2207,8 @@
      슬라이더를 움직이면 이 함수 하나만 돌므로 일부만 갱신되는 일이 없다. */
   function updateLive(view, t) {
     var snap = snapshot(t);
-    var values = snap.values, result = snap.result, v = snap.verdict, axes = snap.axes;
+    var values = snap.values, result = snap.result, axes = snap.axes;
+    var v = verdictFor(t, result.score, snap.verdict, values);
     var meta = liveInfo(t);
     var info = priceInfo(snap);
 
@@ -2015,8 +2224,19 @@
     var scoreEl = el('#gScore', view); if (scoreEl) scoreEl.textContent = trim1(result.score);
     var badge = el('#gBadge', view);
     if (badge) {
-      badge.textContent = badgeOf(result.score);
-      badge.className = 'badge ' + (result.score >= BUY ? 'good' : 'grey');
+      badge.textContent = badgeFor(t, result.score, values);
+      badge.className = 'badge ' + (result.score >= BUY ? (brakeState(t, values) && !brakeState(t, values).pass ? 'amber' : 'good') : 'grey');
+    }
+    var simD = el('[data-sim="dd"]', view), simM = el('[data-sim="months"]', view);
+    var bs = brakeState(t, values);
+    if (bs && simD && document.activeElement !== simD) simD.value = Math.abs(bs.dd).toFixed(1);
+    if (bs && simM && document.activeElement !== simM) simM.value = Number(bs.months).toFixed(1);
+    var brEl = el('#gBrake', view);
+    if (brEl) {
+      var tmp = document.createElement('div');
+      tmp.innerHTML = brakeHtml(t, values);
+      var fresh = tmp.firstChild;
+      if (fresh) brEl.parentNode.replaceChild(fresh, brEl);
     }
     var vd = el('#gVerdict', view);
     if (vd) { vd.textContent = v.label; vd.className = 'g-verdict g-tone-' + v.tone; }
@@ -2030,7 +2250,7 @@
     var radar = el('#gRadar', view); if (radar) radar.innerHTML = radarSvg(axes);
     var state = el('#gState', view); if (state) state.innerHTML = stateHtml(axes, result.score);
 
-    if (el('#ovChart', view)) drawOverlap(view, Data.crashes.cases);
+    if (el('#ovChart', view)) drawOverlap(view, cset(t).cases);
 
     var rows = el('#gTrackTable', view);
     if (rows) {
@@ -2100,7 +2320,7 @@
         if (mark) mark.textContent = open ? '접기 ▴' : '펼치기 ▾';
         if (open) {
           if (key === 'crash') {
-            drawOverlap(view, Data.crashes.cases);
+            drawOverlap(view, cset(CT).cases);
             var cid = el('#gCase', view);
             if (cid) drawCrashChart(view, Data.caseById(cid.getAttribute('data-case-id')));
           }
@@ -2113,10 +2333,35 @@
       b.addEventListener('click', function () {
         ST.target = b.getAttribute('data-target');
         ST.edited = false;
+        simReset();
         dropValues();
         saveState();
         rerender(view, detailId);
       });
+    });
+
+    /* 2단계 시뮬레이션 — SOX 낙폭/경과를 직접 넣으면 그 값으로 브레이크를 다시 본다 */
+    els(view, '[data-sim]').forEach(function (inp) {
+      inp.addEventListener('input', function () {
+        var k = inp.getAttribute('data-sim');
+        var v = numOrNull(inp.value);
+        if (v === null) return;
+        SIM.on = true;
+        SIM.real = false;
+        SIM[k] = v;
+        updateLive(view, ST.target);
+      });
+    });
+    var simR = el('#gSimReset', view);
+    if (simR) simR.addEventListener('click', function () {
+      simReset();
+      SIM.real = true;   /* 수동 입력 중이라도 지금은 실제 ^SOX 값을 보여 준다 */
+      var b = brakeState('sox', valuesRef(ST.target));
+      var d = el('[data-sim="dd"]', view), m = el('[data-sim="months"]', view);
+      if (b && d) d.value = Math.abs(b.dd).toFixed(1);
+      if (b && m) m.value = Number(b.months).toFixed(1);
+      updateLive(view, ST.target);
+      toast('실제 ^SOX 값으로 돌아왔습니다.');
     });
 
     /* 자동/수동 — 수동이면 지금 보이던 여섯 값을 복사해 입력값으로 시작한다 */
@@ -2124,6 +2369,7 @@
       b.addEventListener('click', function () {
         var mode = b.getAttribute('data-mode');
         if (mode === ST.mode) return;
+        simReset();
         if (mode === 'manual') {
           var cur = valuesRef(ST.target);
           ST.manual[ST.target] = {};
@@ -2148,6 +2394,7 @@
         var want = b.getAttribute('data-basis');
         if (want === Basis.get()) return;
         Basis.set(want);
+        simReset();
         ST.edited = false;
         ST.priceSrc = null;
         dropValues();
@@ -2217,7 +2464,7 @@
         OV.scale = b.getAttribute('data-ovscale');
         S.set('crashOv', OV.scale);
         els(view, '[data-ovscale]').forEach(function (x) { x.classList.toggle('on', x === b); });
-        drawOverlap(view, Data.crashes.cases);
+        drawOverlap(view, cset(CT).cases);
       });
     });
 
@@ -2229,7 +2476,7 @@
       S.set('crashWin', OV.win);
       var lab = el('#ovWinLab', view);
       if (lab) lab.textContent = ovWinText(OV.win);
-      drawOverlap(view, Data.crashes.cases);
+      drawOverlap(view, cset(CT).cases);
     });
 
     /* 겹쳐 보기 — 사례 칩 켜고 끄기 (사례·전체·현재 한 곳에서) */
@@ -2238,15 +2485,15 @@
         var id = b.getAttribute('data-ovcase');
         var i = OV_OFF.indexOf(id);
         if (i >= 0) OV_OFF.splice(i, 1); else OV_OFF.push(id);
-        ovChipsSync(view, Data.crashes.cases);
-        drawOverlap(view, Data.crashes.cases);
+        ovChipsSync(view, cset(CT).cases);
+        drawOverlap(view, cset(CT).cases);
       });
     });
 
     /* 겹쳐 보기 — 전체 한 번에(사례 6개 + 현재) */
     els(view, '[data-ovall]').forEach(function (b) {
       b.addEventListener('click', function () {
-        var cases = Data.crashes.cases;
+        var cases = cset(CT).cases;
         var turnOn = !ovAllOn(cases);
         OV_OFF.length = 0;
         if (!turnOn) {
@@ -2263,8 +2510,8 @@
     els(view, '[data-ovtoday]').forEach(function (b) {
       b.addEventListener('click', function () {
         ovSetToday(!ovTodayOn());
-        ovChipsSync(view, Data.crashes.cases);
-        drawOverlap(view, Data.crashes.cases);
+        ovChipsSync(view, cset(CT).cases);
+        drawOverlap(view, cset(CT).cases);
       });
     });
 
@@ -2293,7 +2540,7 @@
         if (e.touches && e.touches[0]) readAt(e.touches[0].clientX);
       }, { passive: true });
       ovHost.addEventListener('mouseleave', function () {
-        drawOverlap(view, Data.crashes.cases);
+        drawOverlap(view, cset(CT).cases);
       });
     }
 
