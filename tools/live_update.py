@@ -265,6 +265,11 @@ SESSION_KO = {"pre": "프리마켓", "regular": "정규장", "post": "애프터�
 # 정적 사이트라 탭에서 넣은 종목이 이 갱신 목록에 자동으로 실리지는 못한다.
 # 그래서 대표 종목을 미리 받아 두고, 목록에 없는 종목은 화면이 증시 스냅샷(data/market.json)
 # 값으로 채운다(그 값도 없으면 '값 없음'으로 둔다 — 지어내지 않는다).
+# 국내 지수 2종 — 증시 홈 '주요 지수' 카드의 숫자도 5분마다 같은 세션 값으로 맞춘다.
+# (스냅샷 data/market.json 은 하루 한 번만 만들어져 장중·장 마감 뒤 값이 묵는다. 카드와 미니차트
+#  끝점이 서로 다른 날 종가를 가리키던 원인이라, 지수도 live.json 이 나르게 한다.)
+KR_INDEX = [("KOSPI", "^KS11", "코스피"), ("KOSDAQ", "^KQ11", "코스닥")]
+
 KR_SYMBOLS = [
     ("005930.KS", "삼성전자"), ("000660.KS", "SK하이닉스"), ("373220.KS", "LG에너지솔루션"),
     ("207940.KS", "삼성바이오로직스"), ("005380.KS", "현대차"), ("000270.KS", "기아"),
@@ -349,6 +354,7 @@ def kr_record(now_kst, sym, quote, meta, name_ko):
         "previousClose": round(float(prev), 2) if prev else None,
         "regularClose": round(float(reg), 2) if reg is not None else None,
         "regularCloseTime": iso(ts), "regularCloseKst": kst_label(ts),
+        "regularChangePct": round(chg, 3) if chg is not None else None,
         "session": session, "sessionLabel": label,
         "sessionPrice": round(float(reg), 2) if (reg is not None and session == "regular") else None,
         "sessionTime": iso(ts) if session == "regular" else None,
@@ -916,7 +922,16 @@ def refresh_candles(root, out_path):
             if old_pairs.get(key):
                 pairs[key] = old_pairs[key]         # 받지 못하면 기존 봉을 지우지 않는다
     now = datetime.now(tz=timezone.utc)
-    info2 = cp.write_files(root, pairs, now.strftime("%Y-%m-%d"), now.isoformat(timespec="seconds"))
+    # asOf 는 벽시계 날짜가 아니라 **마지막 확정 봉 날짜**다 — 주말에 돌려도 금요일 종가 파일로 남는다.
+    import candle_periods as cp
+    last_dates = {k: (v[0][-1][0] if v and v[0] else None) for k, v in pairs.items()}
+    idx_last = [last_dates[k] for k in cp.INDEX_KEYS if last_dates.get(k)]
+    as_of = max(idx_last) if idx_last else now.strftime("%Y-%m-%d")
+    behind = sorted(k for k in cp.INDEX_KEYS if last_dates.get(k) and last_dates[k] != as_of)
+    if behind:
+        print("  지수·대표 ETF 중 마지막 봉이 늦은 것:",
+              ", ".join("%s(%s)" % (k, last_dates[k]) for k in behind), file=sys.stderr)
+    info2 = cp.write_files(root, pairs, as_of, now.isoformat(timespec="seconds"))
     full_path, full_n, full_b = info2["full"]
     idx_path, idx_n, idx_b = info2["index"]
     print("candles.json", full_n, "심볼 ·", full_b // 1024, "KB  ·  candles-index.json", idx_n, "심볼 ·",
@@ -1105,6 +1120,7 @@ def main(argv=None):
 
     # 국장 — 미국장 필수 심볼과 분리해 받는다. 한 종목이 실패해도 그 종목만 빠지고 파일은 쓴다.
     kr_syms = {}
+    kr_index = {}
     kr_partial = []
     kr_error = None
     now_kst = now_utc.astimezone(KST)
@@ -1147,6 +1163,57 @@ def main(argv=None):
                     kr_syms[sym] = prev
                 kr_partial.append(code)
                 kr_error = kr_error or (code + ": " + str(e)[:80])
+        # 국내 지수 — 화면 카드가 스냅샷(하루 한 번) 대신 이 값을 쓴다.
+        for key, ys, name_ko in KR_INDEX:
+            try:
+                js = fx.chart(ys, rng="5d", interval="1d")
+                res = js["chart"]["result"][0]
+                meta = res.get("meta") or {}
+                ts = res.get("timestamp") or []
+                closes = (((res.get("indicators") or {}).get("quote") or [{}])[0].get("close") or [])
+                bars = []
+                for i, t in enumerate(ts):
+                    c = closes[i] if i < len(closes) else None
+                    if c is not None:
+                        bars.append((int(t), float(c)))
+                if len(bars) < 2:
+                    raise RuntimeError("일봉이 모자랍니다")
+                reg = bars[-1][1]
+                prev = bars[-2][1]
+                # 등락률은 **일봉 두 봉**에서 낸다. chart meta 의 previousClose 는 국내 지수에서
+                # 직전 거래일 종가와 다른 값(4869.96 등)을 주기도 해서, 카드 등락이 스냅샷과 어긋난다.
+                chg = ((reg / prev - 1) * 100) if prev else None
+                last_bar = datetime.fromtimestamp(bars[-1][0], KST).date()
+                k_session, k_label = kr_clock(now_kst, str(meta.get("marketState") or "").upper())
+                if k_session == "regular" and last_bar == now_kst.date():
+                    at_kst, at_label = now_kst, now_kst.strftime("%m-%d %H:%M")
+                    note = k_label
+                else:
+                    # 장이 끝난 뒤에는 그 봉 날짜의 정규장 마감(15:30 KST)을 기준 시각으로 적는다.
+                    at_kst = datetime(last_bar.year, last_bar.month, last_bar.day, 15, 30, tzinfo=KST)
+                    at_label = at_kst.strftime("%m-%d %H:%M")
+                    note = k_label
+                kr_index[key] = {
+                    "symbol": key, "market": "kr", "name": name_ko,
+                    "currency": "KRW",
+                    "last": round(reg, 2),
+                    "lastTime": at_kst.isoformat(timespec="seconds"),
+                    "lastTimeKst": at_label,
+                    "changePct": round(chg, 3) if chg is not None else None,
+                    "previousClose": round(prev, 2),
+                    "regularClose": round(reg, 2),
+                    "regularCloseTime": at_kst.isoformat(timespec="seconds"),
+                    "regularCloseKst": at_label,
+                    "regularCloseDate": last_bar.isoformat(),
+                    "regularChangePct": round(chg, 3) if chg is not None else None,
+                    "session": k_session, "sessionLabel": note,
+                    "marketState": str(meta.get("marketState") or "").upper() or None,
+                    "source": "yahoo-chart(지수)",
+                }
+            except Exception as e:  # noqa: BLE001 — 지수 한 개가 실패해도 파일은 쓴다
+                kr_partial.append(key)
+                kr_error = kr_error or (key + ": " + str(e)[:80])
+
         kr_session, kr_label = kr_clock(now_kst, "")
         # 시계는 장중인데 모두 CLOSED 면 휴장일로 적는다
         states = [r.get("marketState") for r in kr_syms.values() if r.get("marketState")]
@@ -1160,6 +1227,7 @@ def main(argv=None):
             "note": ("국내 정규장 09:00~15:30 KST · 미국장과 세션이 다름 · "
                      "지연될 수 있음. 목록 밖 종목은 화면이 증시 스냅샷으로 채운다."),
             "symbols": list(kr_syms), "partial": kr_partial,
+            "indexes": kr_index,
         })
         if kr_error:
             kr_doc["error"] = kr_error

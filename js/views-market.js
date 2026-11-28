@@ -207,7 +207,13 @@
     var s = Mkt.snap;
     if (!s) return '';
     var ses = Mkt.sessionOf(st.market);
-    var txt = '자료 ' + F.day((s.asOf || '').slice(0, 10)) + ' · ' + (s.delayNote || '') +
+    // '자료 11.27' 만 적으면 오늘이 그 날인지 알 수 없다 — 이 화면 숫자가 **어느 정규장 종가**인지 적는다.
+    var by = s.asOfByMarket || {};
+    var dUs = by.us || s.asOf, dKr = by.kr || s.asOf;
+    var stamp = (dUs && dKr && dUs === dKr)
+      ? '마지막 확정 종가 ' + F.day(dUs)
+      : '미국 ' + F.day(dUs) + ' · 국내 ' + F.day(dKr) + ' 종가';
+    var txt = stamp + ' · ' + (s.delayNote || '') +
       ' · 세션 ' + (ses.label || '—');
     if (Mkt.liveErr) txt += ' · 5분 갱신 실패(' + Mkt.liveErr.slice(0, 30) + ')';
     return '<div class="note" style="margin:0">' + esc(txt) + '</div>';
@@ -242,7 +248,7 @@
       h += '</div>';
     }
     h += '<div class="note">' + (market === 'kr'
-      ? '국내 지수는 코스피·코스닥입니다(네이버·트레이딩뷰 지연 시세). 선은 최근 1년 일봉 종가입니다 — 카드를 누르면 같은 1년 일봉 캔들 차트가 열립니다.'
+      ? '국내 지수는 코스피·코스닥입니다(5분 갱신 값 · 지연될 수 있음). 선은 최근 1년 일봉 종가입니다 — 카드를 누르면 같은 1년 일봉 캔들 차트가 열립니다.'
       : '나스닥100·VIX는 실제 지수(^NDX·^VIX)입니다. S&P500·다우존스·러셀2000·반도체는 지수 값이 없어 ETF(SPY·DIA·IWM·SOXX)로 대신합니다(ETF 대체). 선은 최근 1년 일봉 종가입니다 — 카드를 누르면 같은 1년 일봉 캔들 차트가 열립니다.') + '</div>';
     h += '</section>';
 

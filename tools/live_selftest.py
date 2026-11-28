@@ -5,7 +5,7 @@
   python3 tools/live_selftest.py --bars DIR # scratch 등에 받아 둔 TQQQ.json/SOXL.json/VIX.json
 
 확인 항목
-  1) 점수 식이 원본 앱 스냅샷(data/scores.json, 2026-11-20)과 같은가 — TQQQ 98.6 / SOXL 97.6
+  1) 점수 식이 원본 앱 스냅샷(data/scores.json)과 같은가 — 기준일·점수는 파일에서 읽는다(하드코딩 금지)
   2) 프리·정규·장후·휴장·주말 판정이 시계와 quote 를 함께 볼 때 맞는가
   3) 실시간(추정) 점수가 프리마켓 값을 얹었을 때만 달라지는가
 """

@@ -109,6 +109,9 @@ def main():
         scoresDoc = json.load(f)
     peak = tq['scoreDetail']['peak']          # live.json 이 마지막 완료 정규장으로 계산한 값
     ma200 = tq['scoreDetail']['ma200']
+    # 장 마감·휴장에는 '실시간 체결'이 없다(scoreLive=null, session=closed). 그때는 실시간 기준이
+    # 확정 종가와 **같은 값**이 되는 것이 맞다 — 두 기준이 갈리는지를 무조건 요구하지 않는다.
+    has_live_session = (tq.get('scoreLive') is not None) or (tq.get('session') in ('pre', 'post'))
     print('  live %s · score %s · scoreLive %s · peak %.2f · ma200 %.2f' %
           (liveDoc.get('updatedAtKst'), tq.get('score'), tq.get('scoreLive'), peak, ma200))
 
@@ -190,8 +193,11 @@ def main():
         collapsed_live = gauge_state(pg)
         check('입력 섹션이 접힌 채로도 실시간 토글이 먹는다',
               collapsed_live['basisOn'] == ['live'] and collapsed_live['inputHidden'] is True, collapsed_live['basisOn'])
-        check('실시간으로 바꾸면 점수가 그 기준으로 갱신', collapsed_live['score'] != st['score'],
-              (st['score'], collapsed_live['score']))
+        check('실시간으로 바꾸면 점수가 그 기준으로 갱신',
+              (collapsed_live['score'] != st['score']) if has_live_session
+              else (collapsed_live['score'] == st['score']),
+              (st['score'], collapsed_live['score'],
+               '장중' if has_live_session else '장 마감 — 두 기준 같은 종가'))
         check('실시간으로 바꾸면 g-duo 의 실시간이 지금 화면', collapsed_live['duoLiveOn'] is True and collapsed_live['duoCloseOn'] is False)
         check('실시간으로 바꾸면 레이더도 그 기준', collapsed_live['radar'] != st['radar'])
         check('실시간 기준 한 줄에 ET 시각·세션', '프리마켓' in collapsed_live['baseLine'] and 'ET' in collapsed_live['baseLine'], collapsed_live['baseLine'])
@@ -256,8 +262,10 @@ def main():
                   (combos['auto-live']['duoLive'], combos['auto-live']['score']))
         else:
             # 장 마감 등 live.json 에 실시간 점수가 없을 때 — 화면의 여섯 값으로 같은 식으로 낸다
-            check('자동×실시간: 점수가 확정과 갈린다(화면 값으로 다시 계산)',
-                  combos['auto-live']['score'] != combos['auto-close']['score'],
+            check('자동×실시간: 장 마감에는 확정 종가와 같은 값'
+                  if not has_live_session else '자동×실시간: 점수가 확정과 갈린다(화면 값으로 다시 계산)',
+                  (combos['auto-live']['score'] == combos['auto-close']['score']) if not has_live_session
+                  else (combos['auto-live']['score'] != combos['auto-close']['score']),
                   (combos['auto-close']['score'], combos['auto-live']['score']))
             check('자동×실시간: 점수가 g-duo 실시간과 같다',
                   combos['auto-live']['duoLive'] == combos['auto-live']['score'],
@@ -272,7 +280,9 @@ def main():
               abs(float(combos['auto-live']['dd']) - want_dd) < 0.06,
               (combos['auto-live']['dd'], round(want_dd, 2)))
         check('두 기준의 레이더 좌표가 다르다', combos['auto-close']['radar'] != combos['auto-live']['radar'])
-        check('두 기준의 막대 폭이 다르다', combos['auto-close']['bar'] != combos['auto-live']['bar'],
+        check('두 기준의 막대 폭이 다르다',
+              (combos['auto-close']['bar'] != combos['auto-live']['bar']) if has_live_session
+              else (combos['auto-close']['bar'] == combos['auto-live']['bar']),
               (combos['auto-close']['bar'], combos['auto-live']['bar']))
         pg.screenshot(path=os.path.join(SHOTS, 'gauge-390-live.png'))
 
@@ -308,9 +318,12 @@ def main():
         print('  네 조합 — dd/score/price/tag')
         for k, v in combos.items():
             print('    %-13s dd=%-6s score=%-5s %-12s %s' % (k, v['dd'], v['score'], v['price'], v['priceTag']))
-        check('네 조합의 여섯 값이 구분된다(자동 두 조합)',
-              (combos['auto-close']['six'] != combos['auto-live']['six'])
-              or (combos['auto-close']['score'] != combos['auto-live']['score']),
+        check('네 조합의 여섯 값이 구분된다(자동 두 조합)' if has_live_session
+              else '자동 두 조합은 장 마감이라 같은 종가로 같다',
+              ((combos['auto-close']['six'] != combos['auto-live']['six'])
+               or (combos['auto-close']['score'] != combos['auto-live']['score'])) if has_live_session
+              else (combos['auto-close']['six'] == combos['auto-live']['six']
+                    and combos['auto-close']['score'] == combos['auto-live']['score']),
               (combos['auto-close']['six'][:44], combos['auto-live']['six'][:44],
                combos['auto-close']['score'], combos['auto-live']['score']))
         check('수동 두 조합은 내 값으로 같다(기준 무관)',

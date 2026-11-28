@@ -585,11 +585,15 @@
     return out;
   };
 
-  /* 지수 — 스냅샷의 지수 칸 값. 나스닥100(^NDX)·VIX 는 live 의 실제 지수 값을 쓴다. */
+  /* 지수 — 스냅샷의 지수 칸 값. 나스닥100(^NDX)·VIX 는 live 의 실제 지수 값을 쓰고,
+     국내 코스피·코스닥도 live 의 kr.indexes(5분 값)가 있으면 그 값을 쓴다.
+     스냅샷(data/market.json)은 하루 한 번만 만들어져 장중·장 마감 뒤 값이 묵기 때문에,
+     같은 화면의 미니차트 끝점(봉 파일·live dayBars)과 다른 날 종가를 가리키던 자리다. */
   M.indices = function (market, basis) {
     var mk = (M.snap && M.snap.markets && M.snap.markets[market]) || {};
+    var krIdx = (M.live && M.live.kr && M.live.kr.indexes) || {};
     var out = (mk.indices || []).map(function (x) {
-      var live = market === 'us' ? M.liveSym(x.sym) : null;
+      var live = market === 'us' ? M.liveSym(x.sym) : (krIdx[x.sym] || null);
       var price = x.price, chg = x.chg, at = M.snap.generatedAt, note = '스냅샷';
       if (live) {
         // 보는 값(정규장/프리마켓)과 같은 세션의 값만 적는다 — 장외 등락을 정규장 칸에 섮지 않는다.
@@ -600,9 +604,10 @@
           note = live.sessionLabel || '프리마켓';
         } else if (live.regularClose != null) {
           price = live.regularClose;
-          chg = live.regularChangePct != null ? live.regularChangePct : x.chg;
-          at = live.regularCloseTime;
-          note = '정규장';
+          chg = live.regularChangePct != null ? live.regularChangePct
+            : (live.changePct != null ? live.changePct : x.chg);
+          at = live.regularCloseTime || live.regularCloseKst;
+          note = market === 'kr' ? '지수 · 5분 갱신' : '정규장';
         }
       }
       return { sym: x.sym, name: x.name, proxy: x.proxy, price: price, chg: chg, at: at, note: note };

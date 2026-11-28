@@ -18,6 +18,7 @@ import argparse
 import json
 import os
 import re
+import sys
 import time
 import urllib.parse
 import urllib.request
@@ -106,6 +107,86 @@ def scan(market, tickers=None, limit=0, sort_by="market_cap_basic"):
         d["_exch"] = full.split(":")[0] if ":" in full else ""
         rows.append(d)
     return rows
+
+
+def yahoo_daily(sym, rng="3mo", tries=4):
+    """야후 일봉 — 지수의 **마지막 확정 종가**를 얻는 데만 쓴다(키 없음).
+
+    트레이딩뷰 스캐너의 close 는 '지금 값'이라, 미장 개장 직후에 스냅샷을 뜨면 전날 종가가 들어온다.
+    실제로 2026-11-27 09:40 ET 에 만든 market.json 의 지수 칸이 11-25 종가로 남아,
+    같은 화면의 미니차트·카드(11-27 종가)와 어긋났다. 그래서 지수 칸만은 야후 일봉의
+    마지막 봉(정규장 마감 뒤 확정된 봉)으로 덮는다.
+
+    야후는 짧은 시간에 여러 번 부르면 429(과다 요청)를 준다 — 잠깐 쉬었다 다시 부르고,
+    query1 이 막히면 query2 로 바꿔 본다.
+    """
+    last = None
+    for i in range(tries):
+        host = "query1" if i % 2 == 0 else "query2"
+        url = ("https://%s.finance.yahoo.com/v8/finance/chart/%s?range=%s&interval=1d"
+               % (host, urllib.parse.quote(sym), rng))
+        try:
+            # 야후는 **짧은 UA** 만 통과한다(긴 크롬 UA 는 429). tradeview·나스닥용 fetch 와 따로 부른다.
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0",
+                                                      "Accept": "application/json"})
+            with urllib.request.urlopen(req, timeout=20) as r:
+                js = json.loads(r.read().decode("utf-8", "replace"))
+            res = ((js.get("chart") or {}).get("result") or [None])[0]
+            if not res:
+                raise RuntimeError("결과 없음")
+            ts = res.get("timestamp") or []
+            q = ((res.get("indicators") or {}).get("quote") or [{}])[0]
+            closes = q.get("close") or []
+            vols = q.get("volume") or []
+            bars = []
+            for j, t in enumerate(ts):
+                c = closes[j] if j < len(closes) else None
+                if c is None:
+                    continue
+                d = datetime.fromtimestamp(int(t), timezone.utc).date().isoformat()
+                vol = vols[j] if j < len(vols) else None
+                bars.append([d, c, vol])
+            bars.sort(key=lambda x: x[0])
+            return bars or None
+        except Exception as e:  # noqa: BLE001
+            last = e
+            if i < tries - 1:
+                time.sleep(1.5 * (i + 1))
+    raise RuntimeError(str(last)[:80])
+
+
+# 지수 칸의 야후 심볼 — 미국은 ETF 대체 표기, 국내는 KRX 지수.
+YAHOO_INDEX = {"QQQ": "QQQ", "SPY": "SPY", "DIA": "DIA", "IWM": "IWM", "SOXX": "SOXX",
+               "KOSPI": "^KS11", "KOSDAQ": "^KQ11"}
+
+
+def confirmed_index_rows(pairs):
+    """지수 칸을 '마지막 확정 종가'로 맞춘다 → ({sym: {price, chg, volume, date}}, 마지막 날짜).
+
+    등락률은 직전 확정 봉 종가 대비로 다시 계산한다(스캐너의 change 는 스캔 시점 기준이라
+    전날 종가일 때 그 전날의 등락률이 들어간다). 받지 못한 심볼은 None 으로 두고 스캐너 값을 남긴다.
+    """
+    out, last_dates = {}, []
+    for sym, _, _ in pairs:
+        ys = YAHOO_INDEX.get(sym)
+        if not ys:
+            continue
+        try:
+            bars = yahoo_daily(ys)
+        except Exception as e:  # noqa: BLE001
+            print("  지수 일봉 실패", sym, str(e)[:60])
+            continue
+        finally:
+            time.sleep(0.5)
+        if not bars:
+            continue
+        last = bars[-1]
+        prev = bars[-2][1] if len(bars) > 1 else None
+        chg = ((last[1] / prev - 1) * 100) if prev else None
+        out[sym] = {"price": round(num(last[1]), 4), "chg": round(num(chg), 4),
+                    "volume": int(last[2]) if last[2] is not None else None, "date": last[0]}
+        last_dates.append(last[0])
+    return out, (max(last_dates) if last_dates else None)
 
 
 def scan_indices(market, pairs):
@@ -426,15 +507,57 @@ def main():
 
     us_idx = scan_indices("america", US_INDEX)
     kr_idx = scan_indices("korea", KR_INDEX)
-
+    # 지수 칸만은 마지막 확정 종가로 덮는다 — 스냅샷을 장중에 떠도 카드·미니차트·큰 차트가 같은 날 종가를 가리킨다.
+    us_conf, us_date = confirmed_index_rows(US_INDEX)
+    kr_conf, kr_date = confirmed_index_rows(KR_INDEX)
+    for rows, conf in ((us_idx, us_conf), (kr_idx, kr_conf)):
+        for x in rows:
+            c = conf.get(x["sym"])
+            if not c:
+                x["src"] = "tradingview"
+                continue
+            x["price"] = c["price"]
+            x["chg"] = c["chg"]
+            x["volume"] = c["volume"]
+            x["asOf"] = c["date"]
+            x["src"] = "yahoo"
     now = datetime.now(timezone.utc)
+    # 야후 일봉을 받지 못해 확정 종가로 덮지 못한 경우 — 5분 파일(live.json)이 이미 아는
+    # 마지막 확정 봉 날짜를 asOf 로 쓸다(벽시계 날짜를 거래일로 적지 않는다).
+    if not us_date or not kr_date:
+        lv = {}
+        try:
+            with open(os.path.join(ROOT, "data", "live.json"), encoding="utf-8") as f:
+                lv = json.load(f)
+        except Exception:  # noqa: BLE001
+            lv = {}
+        if not us_date:
+            us_date = (((lv.get("symbols") or {}).get("^NDX") or {}).get("regularCloseDate"))
+        if not kr_date:
+            us_kr = ((lv.get("kr") or {}).get("indexes") or {})
+            kr_date = ((us_kr.get("KOSPI") or {}).get("regularCloseDate") or
+                       (us_kr.get("KOSDAQ") or {}).get("regularCloseDate"))
+    unconfirmed = [x["sym"] for x in (us_idx + kr_idx) if x.get("src") != "yahoo"]
+    # 확정 봉으로 덮지 못한 칸도 '어느 세션 값인지'는 적는다(화면·점검이 날짜를 볼 수 있게).
+    for x in us_idx:
+        x.setdefault("asOf", us_date)
+    for x in kr_idx:
+        x.setdefault("asOf", kr_date)
+    if unconfirmed:
+        print("  ! 확정 종가로 덮지 못한 지수(스캔 시점 값):", ", ".join(unconfirmed), file=sys.stderr)
+    # asOf 는 벽시계 날짜가 아니라 **마지막 확정 종가 날짜**다(주말에 만들어도 금요일 종가 파일로 남는다).
+    as_of = max([d for d in (us_date, kr_date) if d] or [now.strftime("%Y-%m-%d")])
     doc = {
-        "asOf": now.strftime("%Y-%m-%d"),
+        "asOf": as_of,
+        "asOfByMarket": {"us": us_date, "kr": kr_date},
         "generatedAt": now.isoformat(timespec="seconds"),
         "fx": {"usdkrw": fx_rate()},
-        "delayNote": "트레이딩뷰 스캐너 값(15분 지연). 봉은 나스닥·네이버 일봉.",
+        "delayNote": "트레이딩뷰 스캐너 값(15분 지연). 지수 칸은 야후 일봉 마지막 확정 종가. 봉은 나스닥·네이버 일봉.",
+        "sessionNote": ("지수 칸은 마지막 확정 종가(미국 %s · 국내 %s)입니다. 주말·휴장일에는 직전 거래일 종가 그대로입니다."
+                        % (us_date or "—", kr_date or "—")),
         "sources": [
             "tradingview scanner /america /korea — 가격·시가총액·PER·RSI·이동평균·업종",
+            "yahoo chart — 지수 칸 마지막 확정 종가(QQQ·SPY·DIA·IWM·SOXX·^KS11·^KQ11)",
             "nasdaq api — 미국 일봉",
             "naver siseJson — 국내 일봉",
         ],
@@ -455,7 +578,7 @@ def main():
                 "sym": x["sym"], "desc": x["name"], "exch": "", "market": mk,
                 "cur": "USD" if mk == "us" else "KRW", "price": x["price"], "chg": x["chg"],
                 "vol": x["volume"], "val": None, "mcap": x["mcap"], "sector": "", "industry": "",
-                "kind": "index", "src": "tradingview",
+                "kind": "index", "src": x.get("src") or "tradingview",
             }
 
     # 캔들 — 지수·상위 종목. 값이 없으면 그 심볼만 빠진다(지어내지 않는다).

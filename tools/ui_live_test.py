@@ -46,6 +46,15 @@ def serve():
     return httpd
 
 
+def numtxt(v):
+    """화면 숫자 표기(F.num)와 같은 꼴 — 80.0 → '80', 80.5 → '80.5'. 스냅샷·live 값이 바뀌어도 이 시험이 낡지 않게."""
+    try:
+        n = float(v)
+    except (TypeError, ValueError):
+        return str(v)
+    return ('%d' % n) if abs(n - int(n)) < 1e-9 else ('%.1f' % n)
+
+
 def main():
     os.makedirs(SHOTS, exist_ok=True)
     had_live = os.path.exists(LIVE)
@@ -53,6 +62,10 @@ def main():
         print('(data/live.json 이 없어 이번 확인은 건너뜁니다 — 먼저 tools/live_update.py 를 돌려 주세요)')
         return 2
     shutil.copy(LIVE, BACKUP)
+    with open(os.path.join(ROOT, 'data', 'scores.json'), encoding='utf-8') as f:
+        scoresDoc = json.load(f)
+    snap_score = scoresDoc['targets']['ndx']['score']
+    snap_asof = scoresDoc['as_of']
 
     from playwright.sync_api import sync_playwright
     httpd = serve()
@@ -75,8 +88,11 @@ def main():
         page.wait_for_timeout(400)
         txt = page.inner_text('main')
         check('없음: 띠가 생기지 않는다', page.locator('#liveStrip').count() == 0)
-        check('없음: 스냅샷 점수 그대로(TQQQ 98.6)', '98.6' in txt, txt[:60].replace('\n', ' '))
-        check('없음: 기준일 표기 그대로', '2026.11.20' in page.inner_text('#foot-asof').replace('2026-11-20', '2026.11.20'))
+        check('없음: 스냅샷 점수 그대로(TQQQ ' + numtxt(snap_score) + ')',
+              numtxt(snap_score) in txt, txt[:60].replace('\n', ' '))
+        check('없음: 기준일 표기 그대로',
+              snap_asof.replace('-', '.') in page.inner_text('#foot-asof').replace('-', '.'),
+              (snap_asof, page.inner_text('#foot-asof')[:40]))
         others = [e for e in console_errors if 'live.json' not in e and '404' not in e]
         check('없음: 콘솔 오류 없음(없는 live.json 404 은 예상된 것)', not others, others[:3])
 
@@ -99,7 +115,8 @@ def main():
         check('있음: 지연 문구', '지연될 수 있음' in strip or '늦을 수 있' in strip)
         check('있음: 장 상태 표기', any(k in strip for k in ('장전', '정규장', '장후', '장 마감')), strip[:120])
         check('있음: TQQQ 가격 표시', 'TQQQ' in strip and ('$' in strip), strip[:160])
-        check('있음: 화면 점수가 live.json 값', ('%.1f' % want['score']) in txt, (want['score'], [l for l in txt.split('\n') if '100' in l][:2]))
+        check('있음: 화면 점수가 live.json 값', numtxt(want['score']) in txt,
+              (want['score'], [l for l in txt.split('\n') if '100' in l][:2]))
         check('있음: 기준일이 live.json 기준', want['scoreAsOf'] not in (None, '') and
               want['scoreAsOf'].replace('-', '.') in page.inner_text('#foot-asof').replace('-', '.'),
               (want['scoreAsOf'], page.inner_text('#foot-asof')))
