@@ -1822,7 +1822,7 @@
 
     var liveNote = (function () {
       var np = ovNowPoint();
-      return np && np.src === 'live' ? ' (겹쳐 보기 현재 선은 실시간 추정 ' + F.pct(np.dd, 1) + ' · ' + esc(np.label) + ')' : '';
+      return np && np.src === 'live' ? ' (겹쳐 보기 현재 선은 ' + F.pct(np.dd, 1) + ' · ' + esc(np.label) + ')' : '';
     })();
 
     /* ── 핵심 표가 맨 위, 그다음 지표 근거 → 겹쳐 보기 → 경로 표·카드 */
