@@ -119,6 +119,9 @@ def main():
                       ('%+.2f%%' % bt['filterA']['213']['mean']) in btx and ('%d건' % bt['filterA']['213']['n']) in btx,
                       bt['filterA']['213'])
                 check('[%d] 백테스트: 걸러진 날 목록' % width, bt['filterA']['dates'][0].replace('-', '.') in btx)
+                btfit = pg.evaluate("()=>{const e=document.querySelector('#gBacktest .tbl-wrap');return e?{cw:e.clientWidth,sw:e.scrollWidth}:null}")
+                check('[%d] 백테스트 표가 390px 화면 안에 들어온다(가로 스크롤 없음)' % width,
+                      btfit and btfit['sw'] <= btfit['cw'], btfit)
                 check('[%d] 반도체 안내 문구(점수 단독 매수 금지)' % width,
                       pg.evaluate("()=>{const e=document.querySelector('#gSoxNote');return e?e.innerText.includes('점수만으로 매수하지 않습니다'):false}"))
 

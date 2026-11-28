@@ -937,7 +937,7 @@
     var bt = Data.backtest('sox');
     function row(name, cell) {
       return '<tr><td>' + name + '</td>' +
-        '<td class="mono">' + cell.n + (cell.done !== null && cell.done !== undefined && cell.done !== cell.n ? ' <span class="dim small">(완결 ' + cell.done + ')</span>' : '') + '</td>' +
+        '<td class="mono">' + cell.n + (cell.done !== null && cell.done !== undefined && cell.done !== cell.n ? '<div class="dim small">완결 ' + cell.done + '</div>' : '') + '</td>' +
         '<td class="mono ' + (cell.mean === null ? 'dim' : (cell.mean < 0 ? 'neg' : 'pos')) + '">' + (cell.mean === null ? '—' : F.pct(cell.mean, 2)) + '</td>' +
         '<td class="mono">' + (cell.win === null ? '—' : F.num(cell.win, 1) + '%') + '</td></tr>';
     }
@@ -953,7 +953,7 @@
       '</dl>' +
       '<p class="note">③ 반도체 90점은 매수 신호가 아닌 경보입니다 — +21거래일 평균 +8.68% · 승률 59.1%(전체 거래일 58.9%와 유사). 금리 방향과 업황을 함께 보세요. ' +
         '점수는 원강 님 앱 계산식 그대로이고, 이 브레이크는 그 위에 얹어 90점을 넘어도 판정을 경보로 내립니다.</p>' +
-      '<div class="tbl-wrap" style="margin-top:8px"><table class="tbl"><thead><tr><th>백테스트 구간</th><th>건수</th><th>+21거래일 평균</th><th>승률</th></tr></thead><tbody>' +
+      '<div class="tbl-wrap" style="margin-top:8px"><table class="tbl wrap1" style="table-layout:fixed;width:100%"><colgroup><col style="width:40%"><col style="width:20%"><col style="width:22%"><col style="width:18%"></colgroup><thead><tr><th>구간</th><th>건수</th><th>+21일 평균</th><th>승률</th></tr></thead><tbody>' +
         row('90점 단독 <span class="dim small">— 보고서(2026-11-20)</span>', { n: 24, done: 22, mean: 8.68, win: 59.1 }) +
         row('90점 단독 <span class="dim small">— 이 사이트 재계산</span>', P) +
         row('필터 A · 90점 + SOX −35% 이상 하락', A) +

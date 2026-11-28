@@ -175,3 +175,10 @@ table.tbl tr.g-near td:first-child{box-shadow:inset 3px 0 0 #4c8dff}
   .g-nowline{padding:8px 10px}
   .g-nowline .tx{font-size:12px}
 }
+
+/* 백테스트 표 — 첫 칸(구간 이름)은 줄바꿈 허용. 390px 에서 건수·평균·승률이 화면 안에 들어오게. */
+table.tbl.wrap1{min-width:0}
+.tbl.wrap1 td,.tbl.wrap1 th{white-space:normal}
+.tbl.wrap1 td:first-child,.tbl.wrap1 th:first-child{min-width:96px;max-width:150px}
+.tbl.wrap1 td,.tbl.wrap1 th{padding:8px 7px}
+.tbl.wrap1 .small{font-size:11px}

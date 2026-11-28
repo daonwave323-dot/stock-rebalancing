@@ -184,7 +184,7 @@
     if (!bt) return '';
     function row(name, cell, cls) {
       return '<tr' + (cls ? ' class="' + cls + '"' : '') + '><td>' + name + '</td>' +
-        '<td class="mono">' + cell.n + (cell.done !== null && cell.done !== undefined && cell.done !== cell.n ? ' <span class="dim small">(완결 ' + cell.done + ')</span>' : '') + '</td>' +
+        '<td class="mono">' + cell.n + (cell.done !== null && cell.done !== undefined && cell.done !== cell.n ? '<div class="dim small">완결 ' + cell.done + '</div>' : '') + '</td>' +
         '<td class="mono ' + (cell.mean === null ? 'dim' : (cell.mean < 0 ? 'neg' : 'pos')) + '">' + (cell.mean === null ? '—' : F.pct(cell.mean, 2)) + '</td>' +
         '<td class="mono">' + (cell.win === null ? '—' : F.num(cell.win, 1) + '%') + '</td></tr>';
     }
@@ -194,7 +194,7 @@
     return '<article class="panel" id="gBacktest">' +
       '<div class="g-sub">백테스트 — 90점 단독 vs 2단계 필터</div>' +
       '<div class="g-cap">SOXL 일별 점수 ' + F.day(bt.from) + '~' + F.day(bt.to) + ' · ' + F.int(bt.rows) + '거래일 · +21거래일 = 그 종가에서 21거래일 뒤 종가</div>' +
-      '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>구간</th><th>건수</th><th>+21거래일 평균</th><th>승률</th></tr></thead><tbody>' +
+      '<div class="tbl-wrap"><table class="tbl wrap1" style="table-layout:fixed;width:100%"><colgroup><col style="width:40%"><col style="width:20%"><col style="width:22%"><col style="width:18%"></colgroup><thead><tr><th>구간</th><th>건수</th><th>+21일 평균</th><th>승률</th></tr></thead><tbody>' +
         row('90점 단독 <span class="dim small">— 보고서(2026-11-20)</span>', report) +
         row('90점 단독 <span class="dim small">— 이 사이트 재계산</span>', P) +
         row('필터 A · 90점 + SOX −35% 이상 하락', A, 'sum') +
