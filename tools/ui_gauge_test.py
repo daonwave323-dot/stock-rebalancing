@@ -580,8 +580,13 @@ def main():
         pg.goto(base + 'index.html#/gauge/crash/c2008')
         pg.wait_for_timeout(1600)
         d2008 = pg.evaluate("()=>document.querySelector('#view').innerText")
+        # 그날 날짜는 자료에서 읽는다 — now 지표가 바뀌면 가장 담은 날도 바뀐다(하드코딩하면 늘 낡는다).
+        with open(os.path.join(ROOT, 'data', 'crashes.json'), encoding='utf-8') as f:
+            crashDoc = json.load(f)
+        c08 = [c for c in crashDoc['cases'] if c['id'] == 'c2008'][0]
+        near = c08['now_match']['date'].replace('-', '.')
         check('사례 상세: 제목 "2007~09 금융위기와 닮은 날"', '2007~09 금융위기와 닮은 날' in d2008)
-        check('사례 상세: 현재 vs 그날 지표 비교표', '현재' in d2008 and '2008.07.11' in d2008 and '차이' in d2008)
+        check('사례 상세: 현재 vs 그날 지표 비교표', '현재' in d2008 and near in d2008 and '차이' in d2008, near)
         check('사례 상세: 옛 표현 없음', '지금과 닮은 날' not in d2008)
         pg.screenshot(path=os.path.join(SHOTS, 'crash-case-detail-390.png'))
 
