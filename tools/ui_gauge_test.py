@@ -5,7 +5,8 @@
 
 확인
   1) 화면 순서가 칩·가격·기준 → 밸류게이지 카드(머리 줄 오른쪽에 정규장/프리마켓 토글) → 매수 지표 입력(접힘)
-     → 희귀도 설명 → 문턱 통계 → 레이더 → 차트 → 폭락 비교 → 지표 기록이고,
+     → 희귀도 설명 → 문턱 통계 → 레이더 → 차트 → 폭락 비교로 끝나고,
+     '지표 기록 · 버블 · 산식' 섹션(과거 점수 기록·버블 체크·매매 기준/산식)은 화면에 없다(2026-11-28 무아 님 지시).
      입력 섹션은 기본 접힘·머리 줄에 지금 점수·기준, 접기/펼치기(터치·키보드)와 새로고침 유지
   2) 값 직접 입력(가격·VIX 칸·이 값으로 계산)이 없다
   3) 자동×확정 / 자동×실시간 / 수동×확정 / 수동×실시간 네 조합의 여섯 값·가격·점수·레이더 좌표
@@ -149,7 +150,13 @@ def main():
         check('입력은 희귀도 설명·문턱 통계·레이더보다 위',
               st['order'].index('gTop') < st['order'].index('gRarityNote')
               and st['order'].index('gTop') < st['order'].index('g-stat'), st['order'])
-        check('지표 기록 섹션은 맨 아래 그대로', st['order'][-1] == 'panel g-sec', st['order'][-3:])
+        check('폭락 비교 섹션이 화면의 맨 아래', st['order'][-1] == 'panel g-sec', st['order'][-3:])
+        secs = pg.evaluate("()=>[...document.querySelectorAll('#view .g-sec')].map(e=>e.getAttribute('data-sec'))")
+        check('접힌 섹션은 폭락 비교 하나뿐(지표 기록·버블·산식 없음)', secs == ['input', 'crash'], secs)
+        check('지표 기록·버블·산식 글이 화면 어디에도 없다',
+              ('지표 기록' not in pg.inner_text('#view')) and ('버블 체크' not in pg.inner_text('#view'))
+              and ('매매 기준 · 지표 설명 · 산식' not in pg.inner_text('#view'))
+              and pg.locator('#gTrackNow').count() == 0)
         geo = pg.evaluate("""() => {
           const r = s => { const e = document.querySelector(s); const b = e.getBoundingClientRect(); return {t: Math.round(b.top), b: Math.round(b.bottom), l: Math.round(b.left), r: Math.round(b.right), w: Math.round(b.width), h: Math.round(b.height)}; };
           return {vh: innerHeight, vw: innerWidth, h2: r('.g-card .g-head h2'), seg: r('#gBaseSeg'),

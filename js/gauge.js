@@ -2,7 +2,8 @@
  *
  * 구성(위에서 아래로, 2026-11-28 무아 님 지시): 대상 칩·가격 → 기준 줄 → 밸류게이지 카드(머리 줄 오른쪽에
  * 정규장/프리마켓 토글) → 매수 지표 입력·지표 추적(기본 접힘) → 희귀도 설명 → 문턱 통계 → 육각 레이더 →
- * 최근 한 달 두 차트 → 전체 흐름 → 폭락 비교(접힘) → 지표 기록·버블·산식(접힘).
+ * 최근 한 달 두 차트 → 전체 흐름 → 폭락 비교(접힘).
+ * 맨 아래 '지표 기록 · 버블 · 산식' 섹션은 2026-11-28 무아 님 지시로 화면에서 없앴다(자료 파일은 그대로).
  * 두 밸류게이지 차트는 최고 점수(빨간 점)와 오늘(초록 점)을 세로 점선·값 라벨로 찍는다.
  *
  * 계산은 원본 core/Singularity.kt 와 같은 식이다(가중치·경계·클램프 그대로). 값이 없는 지표는
@@ -616,14 +617,12 @@
         '<p class="note">점수는 그날까지의 자료만으로 계산했습니다(미래 자료가 섞이지 않게). 2002·2008은 이 사이트의 주별 이력(2011~) 밖이라 그래프가 아니라 위 글줄에만 적었습니다.</p>' +
       '</article>';
 
-    /* 8) 폭락 비교 (접힘) — 차트 묶음 바로 뒤 */
+    /* 8) 폭락 비교 (접힘) — 차트 묶음 바로 뒤, 화면의 맨 아래 */
     var crashHtml = crashSectionHtml(detailId);
-    /* 9) 지표 기록·버블·산식 (접힘) — 입력부는 위 topPanel 하나뿐, 맨 아래 */
-    var track = trackingHtml(t, values, result, snap);
 
     var crashOpen = !!ST.open.crash || isCrashPath();
     /* 순서(2026-11-28 무아 님 지시) — 기준 토글은 밸류게이지 카드 머리 줄, 점수 카드 바로 뒤에 입력 머리 한 줄,
-       희귀도 설명·문턱 통계·레이더·차트는 그 뒤, 지표 기록은 맨 아래. */
+       희귀도 설명·문턱 통계·레이더·차트는 그 뒤, 폭락 비교로 끝난다(지표 기록 섹션은 없앰). */
     view.innerHTML =
       '<section class="hero g-hero"><div class="crumb"><a href="#/">홈</a> / 매수 지표</div>' +
         '<h1>매수 지표</h1>' +
@@ -638,8 +637,7 @@
       radarCard +
       chartsCard +
       flowCard +
-      section('crash', '폭락 비교', '현재 위치 vs 과거 여섯 사례 · 시간 순. 눌러서 폅니다.', crashHtml, crashOpen) +
-      section('track', '지표 기록 · 버블 · 산식', '과거 점수 기록, 버블 체크, 무엇이 실시간인가, 매매 기준·산식. 눌러서 폅니다.', track);
+      section('crash', '폭락 비교', '현재 위치 vs 과거 여섯 사례 · 시간 순. 눌러서 폅니다.', crashHtml, crashOpen);
 
     bind(view, t, detailId);
     drawCharts(view, t, monthPts, result.score);
@@ -768,7 +766,7 @@
         '<p class="note" style="margin:4px 0 8px">나스닥 TQQQ 기준 · ' + scoreTxt + '</p>' +
         '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>지표</th><th>값</th><th>0~100 환산</th><th>가중 기여</th></tr></thead><tbody>' +
           indRows + '</tbody></table></div>' +
-        '<p class="note">값이 없는 지표는 빼고 남은 가중치 합으로 나눕니다. 자세한 산식은 매수 지표 화면의 \'지표 기록 · 버블 · 산식\'에 있습니다.</p>' +
+        '<p class="note">값이 없는 지표는 빼고 남은 가중치 합으로 나눕니다.</p>' +
       '</article>' +
 
       matchPanelHtml() +
@@ -928,121 +926,6 @@
       }).join('') +
       '</tbody></table></div>' +
       '<p class="note" id="gTrackSum">값이 없는 지표는 빼고 남은 가중치 합(' + F.fixed(result.weightSum, 2) + ')으로 나눕니다. 기여도 합 ÷ 가중치 합 = ' + F.num(result.score) + '점.</p>';
-  }
-
-  /* ------------------------------------------------------------ 지표 기록 · 버블 · 산식 */
-
-  function trackingHtml(t, values, result, snap) {
-    var T = Data.gauge.targets[t];
-    var records = S.get('gaugeTrack', []);
-    var mine = records.filter(function (r) { return r.target === t; });
-    var last5 = mine.slice(-5);
-    var trackList = mine.length
-      ? mine.slice(-6).reverse().map(function (r, i2, arr) {
-          var prev = arr[i2 + 1];
-          var d = prev ? (r.score - prev.score) : null;
-          return '<div class="g-track"><span class="nm">' + esc(r.at) + '</span>' +
-            '<b class="mono">' + F.num(r.score) + '</b>' +
-            '<span class="df" style="color:' + (d === null ? 'var(--dim)' : (d > 0 ? 'var(--green)' : (d < 0 ? 'var(--red)' : 'var(--dim)'))) + '">' +
-            (d === null ? '' : F.signed(d, 1)) + '</span></div>';
-        }).join('')
-      : '<p class="g-cap">아직 기록이 없습니다. 이 화면을 열 때마다 그 시각의 여섯 값과 점수를 이 브라우저에 남깁니다.</p>';
-
-    var b = Data.gauge.bubble || {};
-    function sig(kind, val, lv) {
-      if (val === null || val === undefined) return { tone: 'var(--dim)', label: '자료 없음' };
-      if (kind === 'price') return val >= 80 ? { tone: 'var(--red)', label: '위험' } : (val >= 70 ? { tone: 'var(--amber)', label: '주의' } : { tone: 'var(--green)', label: '정상' });
-      if (kind === 'money') return val >= 4.0 ? { tone: 'var(--red)', label: '위험' } : (val >= 3.5 ? { tone: 'var(--amber)', label: '주의' } : { tone: 'var(--green)', label: '정상' });
-      return val > 5 ? { tone: 'var(--amber)', label: '주의' } : { tone: 'var(--green)', label: '정상' };
-    }
-    var sPrice = sig('price', b.sox_rsi_month), sMoney = sig('money', b.hy_spread), sPhys = sig('physical', b.dc_vacancy);
-    var level = (sPrice.label === '위험' || sMoney.label === '위험' || sPhys.label === '위험') ? '위험 신호 있음'
-      : (sPrice.label === '주의' || sMoney.label === '주의' || sPhys.label === '주의') ? '주의 신호 있음' : '신호 없음';
-
-    var bubble =
-      '<article class="panel">' +
-        '<div class="row" style="justify-content:space-between"><div class="g-sub" style="margin:0">버블 체크</div>' +
-        '<span class="badge ' + (level === '위험 신호 있음' ? 'red' : (level === '주의 신호 있음' ? 'amber' : 'grey')) + '">판정 · ' + level + '</span></div>' +
-        '<p class="g-cap">가격·자금·실물 세 스위치. 기준일 ' + F.day(b.as_of) + '</p>' +
-        '<div class="g-tiles">' +
-          '<div class="g-tile"><div class="lab">가격</div><div class="val"><span class="dot" style="background:' + sPrice.tone + '"></span><span style="color:' + sPrice.tone + '">' + sPrice.label + '</span></div>' +
-            '<div class="det">반도체지수 월봉 RSI ' + (b.sox_rsi_month === null ? '—' : F.num(b.sox_rsi_month, 1)) + '</div></div>' +
-          '<div class="g-tile"><div class="lab">자금</div><div class="val"><span class="dot" style="background:' + sMoney.tone + '"></span><span style="color:' + sMoney.tone + '">' + sMoney.label + '</span></div>' +
-            '<div class="det">하이일드 OAS ' + (b.hy_spread === null ? '—' : F.fixed(b.hy_spread, 2) + '%p') + ' · ' + F.day(b.hy_date) + '</div></div>' +
-          '<div class="g-tile"><div class="lab">실물</div><div class="val"><span class="dot" style="background:' + sPhys.tone + '"></span><span style="color:' + sPhys.tone + '">' + sPhys.label + '</span></div>' +
-            '<div class="det">데이터센터 공실률 ' + (b.dc_vacancy === null ? '—' : F.num(b.dc_vacancy, 1) + '%') + '</div></div>' +
-        '</div>' +
-        '<p class="note">신호 기준 — 가격: 반도체지수 월봉 RSI 70↑ 주의·80↑ 위험 / 자금: 하이일드 OAS 3.5%p↑ 주의·4.0%p↑ 위험 / 실물: 데이터센터 공실률 5% 초과 주의. ' +
-          '값이 없는 칸은 원본 자료에 그 값이 없는 것입니다(지어내지 않습니다).</p>' +
-      '</article>';
-
-    var meta = liveInfo(t);
-    var info = priceInfo(snap);
-    var nowWhat = snap.manual ? '내가 넣은 여섯 값(수동)'
-      : (snap.basis === 'live' ? '실시간(추정) 값 · ' + (etPart(meta) || '시각 없음') : '확정 종가 값 · ' + F.day(snap.L.as_of));
-    var prov =
-      '<article class="panel">' +
-        '<div class="g-sub" style="margin:0">무엇이 실시간이고 무엇이 종가인가</div>' +
-        '<p class="note" style="margin-top:6px">확정(종가) = 마지막 정규장 봉. 실시간(추정) = data/live.json 의 지금 값(프리마켓·애프터 포함)을 진행 중인 봉으로 얹어 같은 식으로 다시 계산한 값.</p>' +
-        '<p class="note" style="margin-top:4px">생성 배포지만 GitHub Actions 가 5분마다 data/live.json 을 다시 만듭니다(마지막 갱신 ' + esc(meta && meta.updatedAtKst || '—') + ' KST). 이 화면의 점수·가격·레이더는 <b>' + esc(nowWhat) + '</b>입니다.</p>' +
-        '<div class="tbl-wrap" style="margin-top:8px"><table class="tbl"><thead><tr><th>값</th><th>값</th><th>출처</th></tr></thead><tbody>' +
-          '<tr><td>지금 화면 가격</td><td class="mono">$' + F.fixed(info.price, 2) + '</td><td>' + esc(info.tag) + '</td></tr>' +
-          '<tr><td>' + esc(T.symbol) + ' 종가</td><td class="mono">' + F.fixed(T.detail.close, 2) + '</td><td>일봉 종가</td></tr>' +
-          '<tr><td>5년 최고 종가</td><td class="mono">' + F.fixed(T.detail.peak, 2) + '</td><td>' + F.day(T.detail.peak_date) + '</td></tr>' +
-          '<tr><td>200일선</td><td class="mono">' + F.fixed(T.detail.ma200, 2) + '</td><td>200거래일 평균</td></tr>' +
-          '<tr><td>VIX · 50일 평균</td><td class="mono">' + F.fixed(T.detail.vix, 2) + ' · ' + F.fixed(T.detail.ma50_vix, 2) + '</td><td>1년 ' + T.detail.vix_samples + '거래일</td></tr>' +
-        '</tbody></table></div>' +
-      '</article>';
-
-    var rules = [
-      ['90+', '계획의 50% 투입', '코로나·관세급. 여기까지 왔으면 아껴 둘 이유가 거의 없습니다.', 'var(--green)'],
-      ['80~90', '계획의 25% 투입', '2022 저점급. 1차 진입 자리입니다.', 'var(--blue)'],
-      ['70~80', '계획의 25% 투입', '바닥의 시작 구간입니다.', 'var(--purple)'],
-      ['50~70', '관망', '조정은 맞지만 자리가 아닙니다.', 'var(--amber)'],
-      ['50 미만', '신규 매수 아님', '고점 가까이에 있고 공포도 안 실렸습니다.', 'var(--tx2)'],
-      ['중단', 'VIX 1.8배 + 200일선 -25%', '두 개가 같이 가면 2008년형입니다. 점수와 무관하게 신규 매수를 멈춥니다.', 'var(--red)'],
-      ['매도', '주간 RSI 72 이상 또는 200일선 +15%', '점수가 아니라 이 두 개로 익절을 시작합니다.', 'var(--red)']
-    ];
-    var ruleHtml = rules.map(function (r) {
-      return '<div class="g-rule"><span class="tag" style="color:' + r[3] + ';border-color:' + r[3] + '">' + esc(r[0]) + '</span>' +
-        '<span class="tx">' + esc(r[1]) + '<span class="ds">' + esc(r[2]) + '</span></span></div>';
-    }).join('');
-
-    var gloss = [
-      ['고점 대비 낙폭', '.30', 'TQQQ·SOXL이 최근 5년 최고점에서 얼마나 빠졌나. TQQQ -12%, SOXL -20%면 만점입니다.',
-        '100 × 절대낙폭 / 기준낙폭 (TQQQ 12%, SOXL 20%)', '일봉 종가(5년)'],
-      ['주간 RSI(14주)', '.20', '주봉 기준 과매도 정도. 일봉보다 거짓 신호가 적어 바닥다운 바닥을 골라냅니다.',
-        '(70 - 주간RSI) / 40 × 100 → RSI 30이면 100점, 70이면 0점', '일봉 종가를 주 단위로 묶어 와일더 14주 RSI'],
-      ['VIX / 50일 평균', '.15', '공포지수가 자기 평균보다 얼마나 높은지. 절대 수치보다 평소 대비가 의미 있습니다.',
-        '(비율 - 1) / 0.4 × 100 → 50일 평균의 1.4배면 100점', 'VIX 일별 종가(야후 ^VIX)'],
-      ['200일선 이격', '.15', 'TQQQ·SOXL이 200일선에서 얼마나 아래에 있는지. -30%면 만점.',
-        '-1 × (200일 대비 이격 %) / 30 × 100', '일봉 종가 200일 이동평균'],
-      ['일간 RSI(14)', '.10', '단기 과매도. 주간 RSI와 같이 보면 빠졌지만 아직 안 꺾인 자리를 걸러냅니다.',
-        '(50 - 일간RSI) / 20 × 100 → RSI 30이면 100점', '일봉 종가로 와일더 14 RSI'],
-      ['공포 백분위', '.10', '지금 VIX가 지난 1년 중 몇 번째로 높은지.',
-        '1년 252거래일 중 현재값 이하인 날의 비율', 'VIX 1년 일별']
-    ];
-    var glossHtml = gloss.map(function (g) {
-      return '<dt>' + esc(g[0]) + ' <span class="k">가중 ' + esc(g[1]) + '</span></dt><dd>' + esc(g[2]) +
-        '<br><span class="k">산식</span> ' + esc(g[3]) + '<br><span class="k">출처</span> ' + esc(g[4]) + '</dd>';
-    }).join('');
-
-    var ref =
-      '<article class="panel">' +
-        '<div class="g-sub" style="margin:0">매매 기준 · 지표 설명 · 산식</div>' +
-        '<p class="g-cap">사다리는 ' + BUY + '점부터 겁니다. 과거 바닥은 85~100점에서 나왔습니다.</p>' +
-        ruleHtml +
-        '<dl class="g-gloss">' + glossHtml + '</dl>' +
-      '</article>';
-
-    return '<article class="panel">' +
-        '<div class="g-sub" style="margin:0">지표 추적 기록</div>' +
-        '<p class="g-cap">이 화면을 열 때마다 그 시각의 점수를 이 브라우저에 남깁니다(최근 60개).</p>' +
-        trackList +
-        (last5.length > 1 ? '<p class="note">최근 ' + last5.length + '회 점수  ' + last5.map(function (r) { return F.num(r.score); }).join('  ') + '</p>' : '') +
-        '<button class="btn ghost sm" type="button" id="gTrackNow" style="margin-top:10px">지금 값 기록</button>' +
-      '</article>' +
-      bubble + prov + ref;
   }
 
   function fmtEnd(spec, v) {
@@ -2172,23 +2055,9 @@
     if (el('#gMonth', view)) drawCharts(view, t, monthScorePts(t, snap), result.score);
   }
 
-  function recordNow(t) {
-    var result = snapshot(t).result;
-    var now = new Date();
-    var pad = function (n) { return (n < 10 ? '0' : '') + n; };
-    var at = F.day(F.today()) + ' ' + pad(now.getHours()) + ':' + pad(now.getMinutes());
-    var arr = S.get('gaugeTrack', []);
-    var last = arr[arr.length - 1];
-    if (last && last.at === at && last.target === t) return;
-    arr.push({ at: at, target: t, score: result.score });
-    if (arr.length > 60) arr = arr.slice(arr.length - 60);
-    S.set('gaugeTrack', arr);
-  }
-
   /* ------------------------------------------------------------ 이벤트 */
 
   /* 5분 갱신(live.js)이 새 live.json 을 받으면 이 화면도 다시 그린다 — 새 타이머를 만들지 않는다 */
-  var NO_RECORD = false;
   var LIVE_SIG = null;   /* 마지막으로 그린 live.json 지문 — 값이 그대로면 화면을 다시 그리지 않는다 */
   document.addEventListener('stockrebal:live', function () {
     dropValues();
@@ -2205,9 +2074,7 @@
     if (LIVE_SIG === sig) return;
     LIVE_SIG = sig;
     var m = location.hash.match(/^#\/gauge\/crash\/([\w-]+)/);
-    NO_RECORD = true;
     rerender(v, m ? m[1] : null);
-    NO_RECORD = false;
   });
 
   /* 화면 다시 그리기 — 스크롤 위치를 지키고, 상세(폭락 사례) 경로도 유지한다 */
@@ -2270,7 +2137,6 @@
         ST.edited = false;
         dropValues();
         saveState();
-        recordNow(ST.target);
         rerender(view, detailId);
       });
     });
@@ -2343,14 +2209,6 @@
         if (sl) sl.value = String(v);
         updateLive(view, ST.target);
       });
-    });
-
-    /* 지표 추적 — 지금 값 기록 */
-    var tn = el('#gTrackNow', view);
-    if (tn) tn.addEventListener('click', function () {
-      recordNow(ST.target);
-      rerender(view, detailId);
-      toast('지금 값을 기록했습니다.');
     });
 
     /* 겹쳐 보기 — 보기 3가지 */
@@ -2456,8 +2314,6 @@
     els(view, '[data-scale]').forEach(function (b) {
       b.classList.toggle('on', b.getAttribute('data-scale') === crashScale);
     });
-
-    if (!NO_RECORD) recordNow(t);
   }
 
   /* 가격·VIX → 여섯 지표 (원본 Gauge.valuesFromInputs 와 같은 식)

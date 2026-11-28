@@ -59,12 +59,6 @@
 .g-tone-purple{color:var(--purple)}
 .g-tone-amber{color:var(--amber)}
 .g-tone-grey{color:var(--tx2)}
-.g-tiles{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:8px}
-.g-tile{background:var(--sunken,#0d1428);border:1px solid var(--line);border-radius:10px;padding:9px 10px}
-.g-tile .lab{font-size:11px;color:var(--dim)}
-.g-tile .val{display:flex;align-items:center;gap:6px;margin-top:3px;font-size:12.5px;font-weight:700}
-.g-tile .dot{width:8px;height:8px;border-radius:50%;flex:0 0 auto}
-.g-tile .det{font-size:10.5px;color:var(--dim);margin-top:2px}
 .g-crashrow{cursor:pointer}
 .g-crashrow:hover{background:rgba(255,255,255,.03)}
 .g-case-detail{margin-top:12px}
@@ -84,24 +78,10 @@
   #ovScale button{flex:1 1 auto;padding:8px 6px;text-align:center}
 }
 .g-note-strong{font-size:12.5px;color:var(--tx2);margin:6px 0 0;line-height:1.55}
-.g-track{display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--line);font-size:12.5px}
-.g-track:last-child{border-bottom:0}
-.g-track .nm{flex:1;color:var(--tx2)}
-.g-track .df{font-variant-numeric:tabular-nums;font-weight:700}
-.g-rule{display:flex;gap:10px;align-items:baseline;padding:7px 0;border-bottom:1px solid var(--line)}
-.g-rule:last-child{border-bottom:0}
-.g-rule .tag{flex:0 0 64px;text-align:center;font-size:10.5px;font-weight:700;border:1px solid var(--line2);border-radius:7px;padding:3px 4px;color:var(--tx2)}
-.g-rule .tx{font-size:12.5px;font-weight:700}
-.g-rule .ds{display:block;color:var(--dim);font-size:11.5px;font-weight:400;margin-top:2px}
-.g-gloss{margin-top:12px}
-.g-gloss dt{font-size:13px;font-weight:700;margin:10px 0 2px}
-.g-gloss dd{margin:0;font-size:11.5px;color:var(--tx2);line-height:1.6}
-.g-gloss dd .k{color:var(--dim)}
 .g-jump{font-size:12px;color:var(--blue);background:none;border:0;font:inherit;font-size:12px;cursor:pointer;padding:2px 4px}
 @media (max-width:680px){
   .g-score b{font-size:44px}
   .g-verdict{font-size:17px}
-  .g-tiles{grid-template-columns:1fr}
   .g-sechead{padding:14px}
   .g-secbody{padding:0 14px 14px}
   .g-ind input[type=number]{width:76px}
