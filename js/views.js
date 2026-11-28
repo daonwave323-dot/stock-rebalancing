@@ -1064,17 +1064,10 @@
   };
 
   /* ------------------------------------------------------------ 폭락 사례 목록 */
-  var crashSort = 'dist';
-
+  /* 나열은 시간 순 하나(고점 날짜 오래된 것 → 최신). 정렬 토글은 두지 않는다(무아 님 2026-11-28). */
   V.crash = function (view) {
     var now = Data.now();
-    var cases = Data.crashes.cases.slice();
-    if (crashSort === 'dd') cases.sort(function (a, b) { return a.dd - b.dd; });
-    else if (crashSort === 'year') cases.sort(function (a, b) { return a.peak < b.peak ? -1 : 1; });
-    else cases.sort(function (a, b) {
-      var da = a.now_match ? a.now_match.distance : 9e9, db = b.now_match ? b.now_match.distance : 9e9;
-      return da - db;
-    });
+    var cases = Data.crashes.cases.slice().sort(function (a, b) { return a.peak < b.peak ? -1 : (a.peak > b.peak ? 1 : 0); });
 
     var rows = cases.map(function (c) {
       var m = c.now_match;
@@ -1085,7 +1078,7 @@
         '<td class="mono neg">' + F.pct(c.dd, 1) + '</td>' +
         '<td class="mono">' + F.int(c.days_to_trough) + '</td>' +
         '<td class="mono">' + F.int(c.days_to_recovery) + '</td>' +
-        '<td class="mono">' + (m ? F.day(m.date) + '<div class="dim small">고점 +' + m.day + '일 · 낙폭 ' + F.pct(m.dd, 1) + '</div>' : '—') + '</td>' +
+        '<td class="mono">' + (m ? esc(c.name) + ' · ' + F.day(m.date) + '<div class="dim small">고점 +' + m.day + '일 · 낙폭 ' + F.pct(m.dd, 1) + '</div>' : '—') + '</td>' +
         '<td class="mono">' + (m ? F.num(m.distance, 2) : '—') + '</td>' +
         '<td class="mono ' + (m && m.fwd30 !== null && m.fwd30 < 0 ? 'neg' : 'pos') + '">' + (m ? F.pct(m.fwd30, 1) : '—') + '</td>' +
         '</tr>';
@@ -1110,17 +1103,12 @@
       '</div>' +
 
       '<div class="panel">' +
-        '<div class="panel-h"><h2>사례 표</h2>' +
-          '<select id="sortSel" class="chip" style="margin-left:auto" aria-label="정렬">' +
-            '<option value="dist">지금과 닮은 순</option>' +
-            '<option value="dd">낙폭 큰 순</option>' +
-            '<option value="year">오래된 순</option>' +
-          '</select></div>' +
+        '<div class="panel-h"><h2>사례 표</h2><span class="note">고점 날짜 시간 순</span></div>' +
         '<div class="tbl-wrap"><table class="tbl"><thead><tr>' +
           '<th>사례</th><th>고점</th><th>저점</th><th>낙폭</th><th>저점까지</th><th>회복까지</th>' +
-          '<th>지금과 닮은 날</th><th>거리</th><th>그 뒤 30일</th>' +
+          '<th>그 사례와 닮은 날</th><th>거리</th><th>그 뒤 30일</th>' +
         '</tr></thead><tbody>' + rows + '</tbody></table></div>' +
-        '<p class="note">거리 = 네 지표(낙폭·200일선·RSI·VIX)의 차이를 각 10눈금으로 나눈 평균. 작을수록 닮았습니다. VIX가 없던 1929·1987은 세 지표로만 계산합니다. 표의 줄을 누르면 사례로 들어갑니다.</p>' +
+        '<p class="note">각 사례 안에서 현재와 지표가 가장 가까운 하루를 골랐습니다. 거리 = 네 지표(낙폭·200일선·RSI·VIX)의 차이를 각 10눈금으로 나눈 평균. 작을수록 닮았습니다. VIX가 없던 1929·1987은 세 지표로만 계산합니다. 표의 줄을 누르면 사례로 들어갑니다.</p>' +
       '</div>' +
 
       '<div class="case-grid">' + cases.map(function (c) {
@@ -1130,10 +1118,6 @@
           '<div class="meta">' + F.day(c.peak) + ' → ' + F.day(c.trough) + ' · ' + F.int(c.days_to_trough) + '거래일</div>' +
           '</a>';
       }).join('') + '</div>';
-
-    var sel = el('#sortSel', view);
-    sel.value = crashSort;
-    sel.addEventListener('change', function () { crashSort = sel.value; V.crash(liveView()); });
 
     on(view, 'click', 'tr[data-case]', function (e, t) {
       location.hash = '#/crash/' + t.getAttribute('data-case');
@@ -1211,7 +1195,7 @@
       '</div>' +
 
       '<div class="panel">' +
-        '<div class="panel-h"><h2>지금과 닮은 날</h2>' +
+        '<div class="panel-h"><h2>그 사례와 닮은 날</h2>' +
           (m ? '<span class="badge blue">거리 ' + F.num(m.distance, 2) + '</span>' : '') + '</div>' +
         (m ?
           '<p class="sub-line">' + F.day(m.date) + ' (고점 +' + m.day + '거래일) · 낙폭 ' + F.pct(m.dd, 1) +

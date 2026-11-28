@@ -176,3 +176,22 @@ table.tbl tr.focus td{background:rgba(106,154,224,.14)}
 /* 겹쳐 보기 — 저점 기준 창(1~3년) 슬라이더 */
 .g-win{margin:8px 0 6px}
 .g-win input[type=range]{width:100%}
+
+/* 폭락 비교 — '현재와 닮은 날' 표(맨 위 핵심 표)와 '현재' 행
+   나열은 시간 순 하나. '현재'는 목록 맨 끝에서 색·굵기로만 구분한다. */
+.g-corepanel{border-color:var(--line2)}
+.g-nowline{background:rgba(106,154,224,.10);border:1px solid #3c5c86;border-radius:12px;padding:9px 12px;margin:0 0 10px;line-height:1.55}
+.g-nowline .lab{display:inline-block;font-size:11px;font-weight:800;color:#b9d3f5;letter-spacing:.02em;margin-right:2px}
+.g-nowline .tx{font-size:12.5px;color:var(--tx2);word-break:keep-all}
+.g-nowline .tx b{color:var(--tx)}
+table.tbl tr.g-nowrow td{background:rgba(106,154,224,.13);font-weight:700}
+table.tbl tr.g-nowrow:hover td{background:rgba(106,154,224,.19)}
+table.tbl tr.g-nowrow td:first-child{box-shadow:inset 3px 0 0 var(--blue)}
+table.tbl tr.g-near td:first-child{box-shadow:inset 3px 0 0 #4c8dff}
+.g-rank{display:inline-block;font-size:10.5px;font-weight:800;color:#b9d3f5;border:1px solid #3c5c86;background:#1f3350;border-radius:6px;padding:1px 5px;margin-left:2px;vertical-align:middle}
+.case-card.g-nearcard{border-left-color:#4c8dff}
+.case-card.g-nowcard{border-left-color:var(--blue);background:rgba(106,154,224,.08)}
+@media (max-width:560px){
+  .g-nowline{padding:8px 10px}
+  .g-nowline .tx{font-size:12px}
+}

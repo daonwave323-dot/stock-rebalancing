@@ -638,7 +638,7 @@
       radarCard +
       chartsCard +
       flowCard +
-      section('crash', '폭락 비교', '저점 전후 1년 비교 · 여섯 사례. 눌러서 폅니다.', crashHtml, crashOpen) +
+      section('crash', '폭락 비교', '현재 위치 vs 과거 여섯 사례 · 시간 순. 눌러서 폅니다.', crashHtml, crashOpen) +
       section('track', '지표 기록 · 버블 · 산식', '과거 점수 기록, 버블 체크, 무엇이 실시간인가, 매매 기준·산식. 눌러서 폅니다.', track);
 
     bind(view, t, detailId);
@@ -658,6 +658,7 @@
   var CASE_SCROLLED = null;
 
   function gaugeCaseView(view, id) {
+    if (id === 'now') { nowCaseView(view); return; }
     var c = Data.caseById(id);
     CRASH_SCROLLED = false;   /* 사례 페이지에서 목록으로 돌아올 때 폭락 비교 자리로 가도록 */
     var crumb = '<div class="crumb"><a href="#/">홈</a> / <a href="#/gauge">매수 지표</a> / <a href="#/gauge/crash">폭락 비교</a>' +
@@ -693,6 +694,95 @@
         drawCrashChart(view, c);
       });
     });
+  }
+
+  /* '현재' 상세 페이지(#/gauge/crash/now) — 사례 상세와 같은 틀, 값은 현재 기준.
+     계산은 확정 종가(Data.scores.index)만 쓰고, 실시간 값은 잠정임을 밝혀 따로 적는다. */
+  function nowCaseView(view) {
+    var nc = nowCase();
+    CASE_SCROLLED = 'now';
+    var crumb = '<div class="crumb"><a href="#/">홈</a> / <a href="#/gauge">매수 지표</a> / <a href="#/gauge/crash">폭락 비교</a> / 현재</div>';
+    if (!nc) {
+      view.innerHTML = '<section class="hero g-hero">' + crumb + '<h1>현재</h1><p>지수 일봉이 없어 계산하지 못했습니다.</p></section>' +
+        '<article class="panel"><a class="btn ghost sm" href="#/gauge/crash">폭락 비교 목록으로</a></article>';
+      return;
+    }
+    var chartCase = nowCaseForChart(nc);
+    var np = ovNowPoint();
+    var liveTxt = (np && np.src === 'live')
+      ? F.pct(np.dd, 1) + ' · ' + esc(np.label) + ' — 아직 확정 전인 잠정값'
+      : '실시간 체결값이 없어 확정 종가와 같습니다';
+    var recTxt = nc.daysToRecovery !== null
+      ? F.int(nc.daysToRecovery) + '거래일'
+      : '미회복';
+
+    /* 지금의 여섯 지표와 문턱 대비 위치 — 매수 지표 화면과 같은 snapshot·같은 기준 */
+    var snap = snapshot('ndx');
+    var indRows = (snap.result.rows || []).map(function (r) {
+      return '<tr><td>' + esc(r.name) + '</td>' +
+        '<td class="mono">' + (r.value === null ? '—' : fmtVal(r.key, r.value) + esc(r.unit || '')) + '</td>' +
+        '<td class="mono">' + (r.converted === null ? '—' : F.num(r.converted)) + '</td>' +
+        '<td class="mono">' + (r.contribution === null ? '—' : F.signed(r.contribution, 1)) + '</td></tr>';
+    }).join('');
+    var scoreTxt = snap.result.score >= BUY
+      ? '매수 구간(' + BUY + ' 이상)입니다'
+      : '매수 문턱(' + BUY + ')까지 ' + trim1(BUY - snap.result.score) + '점 남았습니다';
+
+    var lastCase = casesChrono(Data.crashes.cases).slice(-1)[0];
+
+    view.innerHTML =
+      '<section class="hero g-hero">' + crumb +
+        '<h1>현재</h1>' +
+        '<p>2026 진행 중 · <b>^NDX</b> 기준 · 고점 <b>' + F.day(nc.peak) + '</b> (' + F.fixed(nc.peakClose, 2) + ') → 저점 <b>' + F.day(nc.trough) +
+          '</b> (' + F.fixed(nc.troughClose, 2) + ') · 최대 낙폭 <b>' + F.pct(nc.dd, 1) + '</b> · 저점까지 ' + F.int(nc.daysToTrough) + '거래일</p>' +
+        '<p class="byline">기준 = 확정 종가 ' + F.day(nc.closeDate) + ' · 최근 ' + NOW_WIN_MONTHS + '개월(' + F.day(nc.from) + '~' + F.day(nc.to) + ') 창</p>' +
+      '</section>' +
+
+      '<article class="panel g-case-detail" id="gNowCase">' +
+        '<div class="row" style="justify-content:space-between"><div class="g-sub" style="margin:0">경로 — 지금 하락 구간</div>' +
+          '<span class="g-seg"><button type="button" data-scale="peak">고점 기준</button><button type="button" data-scale="trough">저점 기준</button></span></div>' +
+        '<div class="chart-box" id="gCaseChart"></div>' +
+        '<p class="note" id="gCaseNote"></p>' +
+        '<div class="grid g2" style="margin-top:12px">' +
+          '<div><div class="g-sub">현재 값</div><dl class="kv">' +
+            '<div><dt>최대 낙폭</dt><dd class="neg">' + F.pct(nc.dd, 1) + '</dd></div>' +
+            '<div><dt>저점까지</dt><dd>' + F.int(nc.daysToTrough) + '거래일</dd></div>' +
+            '<div><dt>회복까지</dt><dd>' + recTxt + '</dd></div>' +
+            '<div><dt>지금 낙폭(전고점 대비)</dt><dd class="neg">' + F.pct(nc.ddNow, 1) + '</dd></div>' +
+            '<div><dt>저점 대비</dt><dd class="pos">' + F.pct(nc.aboveTrough, 1) + '</dd></div>' +
+            '<div><dt>저점 이후</dt><dd>' + F.int(nc.daysSinceTrough) + '거래일</dd></div>' +
+          '</dl></div>' +
+          '<div><div class="g-sub">기준 시점</div><dl class="kv">' +
+            '<div><dt>확정 종가</dt><dd>' + F.day(nc.closeDate) + ' <small>' + F.fixed(nc.close, 2) + '</small></dd></div>' +
+            '<div><dt>실시간</dt><dd style="font-size:12.5px">' + liveTxt + '</dd></div>' +
+            '<div><dt>점수 산출 기준일</dt><dd>' + (Data.gauge && Data.gauge.as_of ? F.day(Data.gauge.as_of) : '—') + ' <small>gauge.json</small></dd></div>' +
+          '</dl>' +
+          '<p class="note">표와 계산은 확정 종가만 씁니다. 실시간 값은 장중에 움직이므로 저점 날짜·거래일 수에 섞지 않았습니다.</p></div>' +
+        '</div>' +
+      '</article>' +
+
+      '<article class="panel">' +
+        '<div class="row" style="justify-content:space-between;align-items:baseline">' +
+          '<div class="g-sub" style="margin:0">지금 여섯 지표 — 매수 문턱 대비</div>' +
+          '<span class="badge ' + (snap.result.score >= BUY ? 'good' : 'grey') + '">밸류게이지 ' + trim1(snap.result.score) + ' / ' + BUY + ' 이상 매수</span></div>' +
+        '<p class="note" style="margin:4px 0 8px">나스닥 TQQQ 기준 · ' + scoreTxt + '</p>' +
+        '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>지표</th><th>값</th><th>0~100 환산</th><th>가중 기여</th></tr></thead><tbody>' +
+          indRows + '</tbody></table></div>' +
+        '<p class="note">값이 없는 지표는 빼고 남은 가중치 합으로 나눕니다. 자세한 산식은 매수 지표 화면의 \'지표 기록 · 버블 · 산식\'에 있습니다.</p>' +
+      '</article>' +
+
+      matchPanelHtml() +
+
+      '<div class="row" style="justify-content:space-between;margin-top:10px">' +
+        '<a class="btn ghost sm" href="#/gauge/crash/' + lastCase.id + '">← ' + esc(lastCase.short) + '</a>' +
+        '<a class="btn ghost sm" href="#/gauge/crash">폭락 비교 목록</a>' +
+        '<span class="btn ghost sm" style="opacity:.45;pointer-events:none">현재 →</span>' +
+      '</div>';
+
+    if (chartCase) {
+      bindCase(view, chartCase);
+      drawCrashChart(view, chartCase);
+    }
   }
 
   /* 주소가 폭락 비교 목록(#/gauge/crash)인가 — 그 주소로 들어오면 섹션을 펴고 차트도 그린다 */
@@ -1510,49 +1600,235 @@
     return out;
   }
 
-  /* ------------------------------------------------------------ 폭락 비교(원본 접힌 섹션) */
+  /* ------------------------------------------------------------ 폭락 비교(원본 접힌 섹션)
+   *
+   * 나열은 시간 순 하나다(고점 날짜 오래된 것 → 최신). 다른 정렬·'가까운 순' 토글은 두지 않는다
+   * (무아 님 2026-11-28). '현재와 닮은 날·거리'는 정렬 기준이 아니라 표시값이고, 거리에 가까운
+   * 순위(1·2·3…)만 숫자로 붙인다.
+   * '현재'는 사례가 아니라 지금 진행 중인 구간이라 목록 맨 끝(최신)에 따로 세우고 색·굵기로 구분한다.
+   */
 
-  function crashSectionHtml(detailId) {
-    var now = Data.now();
-    var cases = Data.crashes.cases.slice().sort(function (a, b) {
-      var da = a.now_match ? a.now_match.distance : 9e9, db = b.now_match ? b.now_match.distance : 9e9;
-      return da - db;
+  /* 사례 나열 — 시간 순 하나. 고점 날짜 문자열(YYYY-MM-DD) 비교로 충분하다. */
+  function casesChrono(list) {
+    return (list || []).slice().sort(function (a, b) {
+      var pa = String(a.peak || ''), pb = String(b.peak || '');
+      return pa < pb ? -1 : (pa > pb ? 1 : 0);
     });
-    var rows = cases.map(function (c) {
+  }
+
+  /* 전 사례 중 지금과 가장 닮은 하루(거리 최소) */
+  function closestNowMatch(cases) {
+    var best = null;
+    (cases || []).forEach(function (c) {
       var m = c.now_match;
-      /* 30·90·180거래일 뒤 수익률 — 자료에 없으면 (null) '—' 로 비운다 */
-      function fwd(v) {
-        if (v === null || v === undefined) return '<td class="mono dim">—</td>';
-        return '<td class="mono ' + (v < 0 ? 'neg' : 'pos') + '">' + F.pct(v, 1) + '</td>';
-      }
-      return '<tr class="g-crashrow" data-case="' + c.id + '">' +
-        '<td><b style="color:' + c.color + '">■</b> ' + esc(c.name) + '<div class="dim small">' + esc(c.tag) + ' · ' + esc(c.index) + '</div></td>' +
-        '<td class="mono">' + F.day(c.peak) + '<div class="dim small">' + F.fixed(c.peak_close, 2) + '</div></td>' +
-        '<td class="mono">' + F.day(c.trough) + '<div class="dim small">' + F.fixed(c.trough_close, 2) + '</div></td>' +
-        '<td class="mono neg">' + F.pct(c.dd, 1) + '</td>' +
-        '<td class="mono">' + F.int(c.days_to_trough) + '</td>' +
-        '<td class="mono">' + F.int(c.days_to_recovery) + '</td>' +
-        '<td class="mono">' + (m ? F.day(m.date) + '<div class="dim small">고점 +' + m.day + '일 · 낙폭 ' + F.pct(m.dd, 1) + '</div>' : '—') + '</td>' +
-        '<td class="mono">' + (m ? F.num(m.distance, 2) : '—') + '</td>' +
-        fwd(m ? m.fwd30 : null) + fwd(m ? m.fwd90 : null) + fwd(m ? m.fwd180 : null) +
+      if (!m || m.distance === null || m.distance === undefined) return;
+      if (!best || m.distance < best.m.distance) best = { c: c, m: m };
+    });
+    return best;
+  }
+
+  /* 거리 가까움 순위 — { 사례id: 1 } (작을수록 닮음) */
+  function distRanks(cases) {
+    var arr = (cases || []).filter(function (c) {
+      return c.now_match && c.now_match.distance !== null && c.now_match.distance !== undefined;
+    }).sort(function (a, b) { return a.now_match.distance - b.now_match.distance; });
+    var out = {};
+    arr.forEach(function (c, i) { out[c.id] = i + 1; });
+    return out;
+  }
+
+  /* 현재 — 최근 3개월(달력 3개월) 창의 최고점 → 그 뒤 최저점. 확정 종가만 쓴다(Data.scores.index).
+     겹쳐 보기의 현재 선(ovToday: 고점 뒤 최저 종가)과 같은 규칙이라 표와 차트의 고점·저점·낙폭이 같다.
+     실시간 체결값은 섞지 않는다 — 저점 날짜와 거래일 수가 장중에 흔들리기 때문이다.
+     (겹쳐 보기 선만 실시간 값을 끝에 이어 붙이므로, 그 차이는 표 아래 각주에 적는다.) */
+  var NOW_WIN_MONTHS = 3;
+  function nowCase() {
+    var idx = (Data.scores && Data.scores.index) || [];
+    if (idx.length < 5) return null;
+    var lastI = idx.length - 1, last = idx[lastI];
+    var t0 = new Date(last[0] + 'T00:00:00Z');
+    if (isNaN(t0.getTime())) return null;
+    var y = t0.getUTCFullYear(), m = t0.getUTCMonth() - NOW_WIN_MONTHS;
+    while (m < 0) { m += 12; y -= 1; }
+    var fromIso = new Date(Date.UTC(y, m, t0.getUTCDate())).toISOString().slice(0, 10);
+    var from = 0, i;
+    for (i = 0; i < idx.length; i++) { if (idx[i][0] >= fromIso) { from = i; break; } }
+    var hi = from, lo = from;
+    for (i = from; i <= lastI; i++) if (idx[i][1] > idx[hi][1]) hi = i;
+    for (i = hi; i <= lastI; i++) if (idx[i][1] < idx[lo][1]) lo = i;
+    var hiClose = idx[hi][1], loClose = idx[lo][1], cur = last[1];
+    var recI = -1;
+    for (i = lo + 1; i <= lastI; i++) if (idx[i][1] >= hiClose) { recI = i; break; }
+    return {
+      from: idx[from][0], to: last[0],
+      peakI: hi, troughI: lo, lastI: lastI,
+      peak: idx[hi][0], peakClose: hiClose,
+      trough: idx[lo][0], troughClose: loClose,
+      dd: hiClose > 0 ? (loClose / hiClose - 1) * 100 : null,
+      daysToTrough: lo - hi,
+      daysToRecovery: recI >= 0 ? recI - lo : null,
+      daysSinceTrough: lastI - lo,
+      closeDate: last[0], close: cur,
+      ddNow: hiClose > 0 ? (cur / hiClose - 1) * 100 : null,        /* 전고점 대비 지금 */
+      aboveTrough: loClose > 0 ? (cur / loClose - 1) * 100 : null,  /* 저점보다 얼마나 위 */
+      backPct: hiClose > loClose ? (cur - loClose) / (hiClose - loClose) * 100 : null,
+      analog: closestNowMatch(Data.crashes.cases)
+    };
+  }
+
+  /* '현재'를 사례 상세와 같은 틀(경로 차트·값)로 그리기 위한 가짜 사례 객체 */
+  function nowCaseForChart(nc) {
+    var idx = (Data.scores && Data.scores.index) || [];
+    if (!nc || !idx.length) return null;
+    var prePath = [], path = [], troughPath = [];
+    for (var a = Math.max(0, nc.peakI - 252); a < nc.peakI; a++) {
+      prePath.push([a - nc.peakI, (idx[a][1] / nc.peakClose - 1) * 100]);
+    }
+    for (var b = nc.peakI; b <= nc.lastI; b++) {
+      path.push([b - nc.peakI, (idx[b][1] / nc.peakClose - 1) * 100]);
+    }
+    for (var c = Math.max(0, nc.troughI - 252); c <= nc.lastI; c++) {
+      troughPath.push([c - nc.troughI, (idx[c][1] / nc.troughClose - 1) * 100]);
+    }
+    return {
+      id: 'now', name: '현재', short: '현재', color: 'var(--blue)', tag: '2026 진행 중', index: '나스닥100',
+      peak: nc.peak, peak_close: nc.peakClose, trough: nc.trough, trough_close: nc.troughClose,
+      dd: nc.dd, days_to_trough: nc.daysToTrough, days_to_recovery: nc.daysToRecovery,
+      prePath: prePath, path: path, troughPath: troughPath,
+      markX: nc.troughI - nc.peakI, markY: nc.dd,
+      preFrom: idx[Math.max(0, nc.peakI - 252)] ? idx[Math.max(0, nc.peakI - 252)][0] : null,
+      troughFrom: idx[Math.max(0, nc.troughI - 252)] ? idx[Math.max(0, nc.troughI - 252)][0] : null,
+      troughTo: nc.closeDate
+    };
+  }
+
+  /* ── 핵심 표: '현재 ↔ 그 사례의 닮은 날' — 이 화면의 맨 위에 온다 */
+  function matchPanelHtml() {
+    var now = Data.now();
+    var cases = casesChrono(Data.crashes.cases);
+    var ranks = distRanks(cases);
+    var nearest = closestNowMatch(cases);
+    var nc = nowCase();
+    var ddNow = (nc && nc.ddNow !== null && nc.ddNow !== undefined) ? nc.ddNow : now.dd;
+    var basisDay = nc ? nc.closeDate : now.as_of;
+
+    function fwdCell(v) {
+      if (v === null || v === undefined) return '<td class="mono dim">—</td>';
+      return '<td class="mono ' + (v < 0 ? 'neg' : 'pos') + '">' + F.pct(v, 1) + '</td>';
+    }
+
+    var matchRows = cases.map(function (c) {
+      var m = c.now_match, rk = ranks[c.id];
+      return '<tr class="g-crashrow' + (nearest && nearest.c.id === c.id ? ' g-near' : '') + '" data-case="' + c.id + '">' +
+        '<td><b style="color:' + c.color + '">■</b> ' + esc(c.name) +
+          (rk === 1 ? ' <span class="badge blue">가장 닮음</span>' : '') +
+          '<div class="dim small">' + F.day(c.peak) + ' → ' + F.day(c.trough) + ' · ' + esc(c.index) + '</div></td>' +
+        '<td class="mono">' + (m ? F.day(m.date) + '<div class="dim small">고점 +' + m.day + '일</div>' : '—') + '</td>' +
+        fwdCell(m ? m.dd : null) +
+        '<td class="mono neg">' + F.pct(ddNow, 1) + '</td>' +
+        '<td class="mono">' + (m ? F.num(m.distance, 2) + (rk ? ' <span class="g-rank">' + rk + '위</span>' : '') : '—') + '</td>' +
+        fwdCell(m ? m.fwd30 : null) + fwdCell(m ? m.fwd90 : null) +
         '</tr>';
     }).join('');
 
+    /* 현재 행 — 시간 순 맨 끝(최신). 자기 값만 적고, 다른 사례의 수치를 옮겨 적지 않는다. */
+    var nowMatchRow = nc
+      ? '<tr class="g-nowrow g-crashrow" data-case="now">' +
+          '<td><b>현재</b> <span class="badge blue">2026</span><div class="dim small">진행 중 · 나스닥100 · 확정 종가 ' + F.day(nc.closeDate) + '</div></td>' +
+          '<td class="mono dim">—</td><td class="mono dim">—</td>' +
+          '<td class="mono neg">' + F.pct(ddNow, 1) + '</td>' +
+          '<td class="mono dim">—</td><td class="mono dim">—</td><td class="mono dim">—</td>' +
+        '</tr>'
+      : '';
+
+    var nowLine = nc
+      ? '<div class="g-nowline" id="gNowLine">' +
+          '<span class="lab">현재 기준</span> ' +
+          '<span class="tx">낙폭 <b class="neg">' + F.pct(ddNow, 1) + '</b>' +
+            (nearest ? ' · 거리 최소 <b>' + F.num(nearest.m.distance, 2) + '</b> (' + esc(nearest.c.name) + ')' : '') +
+            ' · 확정 종가 ' + F.day(nc.closeDate) + '</span>' +
+        '</div>'
+      : '';
+
+    return '<article class="panel g-corepanel" id="gNowMatch">' +
+        '<div class="row" style="justify-content:space-between;align-items:baseline">' +
+          '<div class="g-sub" style="margin:0">현재와 닮은 날 비교</div>' +
+          '<span class="g-cap" style="margin:0">기준 = 확정 종가 ' + F.day(basisDay) + '</span></div>' +
+        '<p class="note" style="margin:4px 0 6px">지금(현재)과 가장 닮은 날을 사례별로 골라 나란히 봅니다. 사례는 <b>고점 날짜 시간 순</b>, <b>현재</b>는 맨 끝입니다.</p>' +
+        nowLine +
+        '<div class="tbl-wrap"><table class="tbl"><thead><tr>' +
+          '<th>사례</th><th>그 사례와 닮은 날</th><th>그날 낙폭</th><th>지금 낙폭</th><th>지표 거리</th><th>그 뒤 30일</th><th>그 뒤 90일</th>' +
+        '</tr></thead><tbody>' + matchRows + nowMatchRow + '</tbody></table></div>' +
+        '<p class="note">각 사례 안에서 <b>현재와 지표가 가장 가까운 하루</b>를 골랐습니다. 비교의 두 축은 <b>현재</b>와 <b>그 사례의 그 하루</b>입니다. ' +
+          '지표 거리 = 네 지표(낙폭·200일선·RSI·VIX)의 차이를 각 10눈금으로 나눈 평균 — 작을수록 닮았습니다. 옆 숫자는 가까운 순위(1 = 가장 닮은 사례). ' +
+          'VIX가 없던 1929·1987은 세 지표로만 셉니다. 30·90일 = 그 하루 뒤 그만큼 거래일이 지난 뒤 수익률, 자료에 없는 칸은 —입니다. 줄을 누르면 사례 상세가 열립니다.</p>' +
+      '</article>';
+  }
+
+  function crashSectionHtml(detailId) {
+    var now = Data.now();
+    var cases = casesChrono(Data.crashes.cases);
+    var ranks = distRanks(cases);
+    var nearest = closestNowMatch(cases);
+    var nc = nowCase();
+    var basisDay = nc ? nc.closeDate : now.as_of;
+
+    /* ── 경로 표: 사례 | 고점 → 저점 | 최대 낙폭 | 저점까지 | 회복까지 */
+    var pathRows = cases.map(function (c) {
+      return '<tr class="g-crashrow" data-case="' + c.id + '">' +
+        '<td><b style="color:' + c.color + '">■</b> ' + esc(c.name) + '<div class="dim small">' + esc(c.tag) + '</div></td>' +
+        '<td class="mono">' + F.day(c.peak) + ' <span class="dim">' + F.fixed(c.peak_close, 2) + '</span>' +
+          '<div class="dim small">→ ' + F.day(c.trough) + ' <span>' + F.fixed(c.trough_close, 2) + '</span></div></td>' +
+        '<td class="mono neg">' + F.pct(c.dd, 1) + '</td>' +
+        '<td class="mono">' + F.int(c.days_to_trough) + '</td>' +
+        '<td class="mono">' + F.int(c.days_to_recovery) + '</td>' +
+        '</tr>';
+    }).join('');
+
+    var nowPathRow = '';
+    if (nc) {
+      var recCell = nc.daysToRecovery !== null
+        ? F.int(nc.daysToRecovery) + '<div class="dim small">저점 ' + nc.daysSinceTrough + '거래일 뒤 회복</div>'
+        : '<b>미회복</b><div class="dim small">저점 ' + F.pct(nc.aboveTrough, 1) + ' · ' + nc.daysSinceTrough + '거래일째</div>';
+      nowPathRow = '<tr class="g-nowrow g-crashrow" data-case="now">' +
+        '<td><b>현재</b> <span class="badge blue">2026</span><div class="dim small">진행 중 · 나스닥100 · 확정 종가 ' + F.day(nc.closeDate) + '</div></td>' +
+        '<td class="mono">' + F.day(nc.peak) + ' <span class="dim">' + F.fixed(nc.peakClose, 2) + '</span>' +
+          '<div class="dim small">→ ' + F.day(nc.trough) + ' <span>' + F.fixed(nc.troughClose, 2) + '</span></div></td>' +
+        '<td class="mono neg">' + F.pct(nc.dd, 1) + '</td>' +
+        '<td class="mono">' + F.int(nc.daysToTrough) + '</td>' +
+        '<td class="mono">' + recCell + '</td>' +
+        '</tr>';
+    }
+
     var cards = cases.map(function (c) {
-      var m = c.now_match;
-      return '<a class="case-card" href="#/gauge/crash/' + c.id + '" style="border-left-color:' + c.color + '">' +
-        '<div class="top"><span class="nm">' + esc(c.short) + '</span><span class="dd">' + F.pct(c.dd, 1) + '</span></div>' +
-        '<div class="meta">' + esc(c.name) + ' · 저점까지 ' + F.int(c.days_to_trough) + '거래일</div>' +
-        (m ? '<div class="meta">닮은 날 ' + F.day(m.date) + ' (고점 +' + m.day + '일, 거리 ' + F.num(m.distance, 2) + ') → 30일 ' +
-          (m.fwd30 === null || m.fwd30 === undefined ? '—' : F.pct(m.fwd30, 1)) + ' · 90일 ' +
-          (m.fwd90 === null || m.fwd90 === undefined ? '—' : F.pct(m.fwd90, 1)) + ' · 180일 ' +
-          (m.fwd180 === null || m.fwd180 === undefined ? '—' : F.pct(m.fwd180, 1)) + '</div>' : '') +
+      var m = c.now_match, rk = ranks[c.id];
+      return '<a class="case-card' + (nearest && nearest.c.id === c.id ? ' g-nearcard' : '') + '" href="#/gauge/crash/' + c.id + '" style="border-left-color:' + c.color + '">' +
+        '<div class="top"><span class="nm">' + esc(c.short) + (rk ? ' <span class="g-rank">' + rk + '위</span>' : '') + '</span><span class="dd">' + F.pct(c.dd, 1) + '</span></div>' +
+        '<div class="meta">' + esc(c.name) + ' · 저점까지 ' + F.int(c.days_to_trough) + '거래일 · 회복 ' + F.int(c.days_to_recovery) + '거래일</div>' +
+        (m ? '<div class="meta">' + esc(c.name) + '와 닮은 날 ' + F.day(m.date) + ' (고점 +' + m.day + '일) · 거리 ' + F.num(m.distance, 2) +
+          ' · 30일 ' + (m.fwd30 === null || m.fwd30 === undefined ? '—' : F.pct(m.fwd30, 1)) + '</div>' : '') +
         '</a>';
     }).join('');
 
-    var html =
+    if (nc) {
+      cards += '<a class="case-card g-nowcard" href="#/gauge/crash/now">' +
+        '<div class="top"><span class="nm">현재 <span class="badge blue">2026</span></span><span class="dd neg">' + F.pct(nc.dd, 1) + '</span></div>' +
+        '<div class="meta">2026 진행 중 · 최근 3개월 고점 ' + F.day(nc.peak) + ' → 저점 ' + F.day(nc.trough) + '</div>' +
+        '<div class="meta">저점까지 ' + F.int(nc.daysToTrough) + '거래일 · ' +
+          (nc.daysToRecovery !== null ? '회복 ' + F.int(nc.daysToRecovery) + '거래일' : '미회복(전고점 ' + F.pct(nc.ddNow, 1) + ')') +
+          ' · 확정 종가 ' + F.day(nc.closeDate) + ' → 눌러서 현재 상세</div>' +
+        '</a>';
+    }
+
+    var liveNote = (function () {
+      var np = ovNowPoint();
+      return np && np.src === 'live' ? ' (겹쳐 보기 현재 선은 실시간 추정 ' + F.pct(np.dd, 1) + ' · ' + esc(np.label) + ')' : '';
+    })();
+
+    /* ── 핵심 표가 맨 위, 그다음 지표 근거 → 겹쳐 보기 → 경로 표·카드 */
+    var geoPanel =
       '<article class="panel">' +
-        '<div class="row" style="justify-content:space-between"><div class="g-sub" style="margin:0">지금 위치</div>' +
+        '<div class="row" style="justify-content:space-between"><div class="g-sub" style="margin:0">현재 지표 — 거리 계산에 쓴 값</div>' +
           '<span class="badge live">' + esc(now.source) + ' · ' + F.day(now.as_of) + '</span></div>' +
         '<dl class="kv" style="margin-top:8px">' +
           '<div><dt>지수 종가</dt><dd>' + F.fixed(now.close, 2) + '</dd></div>' +
@@ -1563,17 +1839,27 @@
           '<div><dt>VIX / 50일 평균</dt><dd>' + F.fixed(now.vix, 2) + ' <small>' + F.num(now.vix_ratio, 2) + '배 · 1년 ' + F.num(now.vix_pct, 1) + '%</small></dd></div>' +
         '</dl>' +
         '<p class="note">' + esc(now.window_note) + '</p>' +
-      '</article>' +
-      overlapCard(cases) +
+      '</article>';
+
+    var pathPanel =
       '<article class="panel">' +
-        '<div class="tbl-wrap"><table class="tbl"><thead><tr>' +
-          '<th>사례</th><th>고점</th><th>저점</th><th>낙폭</th><th>저점까지</th><th>회복까지</th>' +
-          '<th>지금과 닮은 날</th><th>거리</th><th>30일</th><th>90일</th><th>180일</th>' +
-        '</tr></thead><tbody>' + rows + '</tbody></table></div>' +
-        '<p class="note">오른쪽 세 열(30·90·180일)은 닮은 날 이후 그만큼 <b>거래일</b>이 지난 뒤의 수익률입니다. 자료에 없는 칸은 —로 비웠습니다. ' +
-          '거리 = 네 지표(낙폭·200일선·RSI·VIX)의 차이를 각 10눈금으로 나눈 평균. 작을수록 닮았습니다. VIX가 없던 1929·1987은 세 지표로만 계산합니다. 줄을 누르면 사례 상세가 열립니다.</p>' +
+        '<div class="row" style="justify-content:space-between;align-items:baseline">' +
+          '<div class="g-sub" style="margin:0">사례 경로 — 고점 → 저점, 회복까지</div>' +
+          '<span class="g-cap" style="margin:0">시간 순 · 현재 맨 끝</span></div>' +
+        '<div class="tbl-wrap" style="margin-top:8px"><table class="tbl"><thead><tr>' +
+          '<th>사례</th><th>고점 → 저점</th><th>최대 낙폭</th><th>저점까지</th><th>회복까지</th>' +
+        '</tr></thead><tbody>' + pathRows + nowPathRow + '</tbody></table></div>' +
+        '<p class="note"><b>나열은 고점 날짜 시간 순 하나입니다</b> — 1929 → 1987 → 2000 → 2008 → 2020 → 2025 → 현재(2026). ' +
+          '\'현재\'는 사례로 섞지 않고 맨 끝 최신에 세웠습니다. 현재 값은 확정 종가만 씁니다 — 지수 마지막 종가 ' + F.day(basisDay) +
+          (Data.gauge && Data.gauge.as_of ? ' · 점수 산출 기준일 ' + F.day(Data.gauge.as_of) + '(gauge.json)' : '') + '. ' +
+          (nc ? '최근 ' + NOW_WIN_MONTHS + '개월(' + F.day(nc.from) + '~' + F.day(nc.to) + ') 안 최고점 → 그 뒤 최저 종가로 계산했고, 회복은 전고점 종가를 다시 넘은 날입니다.' : '') +
+          ' 저점까지·회복까지는 <b>거래일</b> 수입니다.</p>' +
+        '<p class="note">겹쳐 보기의 현재 선과 같은 규칙(최근 고점 → 그 뒤 최저 종가)이라 고점·저점·낙폭이 같습니다. ' +
+          '그 선만 실시간 체결이 있으면 끝에 그 값을 이어 붙이므로 표의 확정 종가 값과 지금 낙폭이 다를 수 있습니다' + liveNote + '.</p>' +
         '<div class="case-grid" style="margin-top:10px">' + cards + '</div>' +
       '</article>';
+
+    var html = matchPanelHtml() + geoPanel + overlapCard(cases) + pathPanel;
 
     if (detailId) {
       var c = Data.caseById(detailId);
@@ -1584,10 +1870,23 @@
 
   function crashDetailHtml(c) {
     var cases = Data.crashes.cases;
-    var idx = cases.indexOf(c);
-    var prev = cases[(idx - 1 + cases.length) % cases.length];
-    var next = cases[(idx + 1) % cases.length];
+    var navList = casesChrono(cases).concat([{ id: 'now', short: '현재' }]);
+    var nIdx = -1;
+    for (var k = 0; k < navList.length; k++) if (navList[k].id === c.id) nIdx = k;
+    var prev = navList[(nIdx - 1 + navList.length) % navList.length];
+    var next = navList[(nIdx + 1) % navList.length];
     var m = c.now_match;
+    var rk = distRanks(cases)[c.id];
+    var rankText = rk ? rk + '위' : '순위 없음';
+    /* 현재와 그 사례의 그 하루를 나란히 — 지표 차이까지 */
+    function cmpRow(label, curV, dayV, digits, unit) {
+      var d = (curV === null || curV === undefined || dayV === null || dayV === undefined) ? null : (dayV - curV);
+      function vv(v) { return (v === null || v === undefined) ? '—' : F.fixed(v, digits) + (unit || ''); }
+      return '<tr><td>' + label + '</td>' +
+        '<td class="mono">' + vv(curV) + '</td>' +
+        '<td class="mono">' + vv(dayV) + '</td>' +
+        '<td class="mono ' + (d === null ? 'dim' : (d < 0 ? 'neg' : 'pos')) + '">' + (d === null ? '—' : F.signed(d, digits) + (unit || '')) + '</td></tr>';
+    }
     function metric(label, val, unit, digits) {
       return '<div><dt>' + label + '</dt><dd>' + (val === null || val === undefined ? '—' : F.fixed(val, digits === undefined ? 2 : digits)) +
         (val === null || val === undefined ? '' : (unit || '')) + '</dd></div>';
@@ -1627,10 +1926,15 @@
           metric('미 10년 금리', c.peak_10y, '%', 2) +
         '</dl><p class="note">비어 있는 값(—)은 원본에 그 값이 없는 것입니다. 지어내지 않았습니다.</p></div>' +
       '</div>' +
-      (m ? '<div style="margin-top:12px"><div class="row" style="justify-content:space-between"><div class="g-sub" style="margin:0">지금과 닮은 날</div>' +
-        '<span class="badge blue">거리 ' + F.num(m.distance, 2) + '</span></div>' +
-        '<p class="sub-line">' + F.day(m.date) + ' (고점 +' + m.day + '거래일) · 낙폭 ' + F.pct(m.dd, 1) +
-          ' · 200일선 ' + F.pct(m.gap, 1) + ' · RSI ' + F.num(m.rsi) + ' · VIX ' + F.num(m.vix, 2) + '</p>' +
+      (m ? '<div style="margin-top:12px"><div class="row" style="justify-content:space-between"><div class="g-sub" style="margin:0">' + esc(c.name) + '와 닮은 날</div>' +
+        '<span class="badge blue">거리 ' + F.num(m.distance, 2) + ' · ' + rankText + '</span></div>' +
+        '<p class="sub-line">그 사례 안에서 <b>현재와 지표가 가장 가까운 하루</b>입니다 — ' + F.day(m.date) + ' (고점 +' + m.day + '거래일)</p>' +
+        '<div class="tbl-wrap" style="margin-top:8px;border:0"><table class="tbl g-cmp"><thead><tr><th>지표</th><th>현재</th><th>' + F.day(m.date) + '</th><th>차이</th></tr></thead><tbody>' +
+          cmpRow('고점 대비 낙폭', Data.now().dd, m.dd, 1, '%') +
+          cmpRow('200일선 이격', Data.now().gap, m.gap, 1, '%') +
+          cmpRow('일간 RSI(14)', Data.now().rsi, m.rsi, 1, '') +
+          cmpRow('VIX', Data.now().vix, m.vix, 2, '') +
+        '</tbody></table></div>' +
         '<dl class="kv" style="margin-top:10px">' +
           '<div><dt>그 날 이후 30거래일</dt><dd class="' + (m.fwd30 !== null && m.fwd30 < 0 ? 'neg' : 'pos') + '">' + F.pct(m.fwd30, 1) + '</dd></div>' +
           '<div><dt>90거래일</dt><dd class="' + (m.fwd90 !== null && m.fwd90 < 0 ? 'neg' : 'pos') + '">' + F.pct(m.fwd90, 1) + '</dd></div>' +
@@ -1765,16 +2069,20 @@
     if (crashScale === 'trough') {
       var pts = (c.troughPath || []).map(function (p) { return [p[0], p[1]]; });
       if (!pts.length) { host.innerHTML = '<div class="empty">저점 기준 경로가 없습니다.</div>'; return; }
+      var xMinP = pts[0][0], xMaxP = pts[pts.length - 1][0];
       Charts.line(host, {
         height: 260,
         series: [{ name: '저점 대비', color: c.color, points: pts }],
-        xMin: pts[0][0], xMax: pts[pts.length - 1][0],
-        xTicks: [pts[0][0], -126, 0, 126, pts[pts.length - 1][0]].map(function (x) { return { x: x, label: (x > 0 ? '+' : '') + x }; }),
+        xMin: xMinP, xMax: xMaxP,
+        xTicks: [xMinP, -126, 0, 126, xMaxP]
+          .filter(function (x) { return x >= xMinP && x <= xMaxP; })
+          .filter(function (x, i2, arr) { return arr.indexOf(x) === i2; })
+          .map(function (x) { return { x: x, label: (x > 0 ? '+' : '') + x }; }),
         hlines: [{ y: 0, color: '#5d7096', label: '저점 = 0%', dash: '4 4' }],
         markers: [{ x: 0, y: 0, color: c.color, label: '저점', r: 4 }],
         yDigits: 0
       });
-      el('#gCaseNote', view).textContent = '저점 종가를 0%로 두고 저점 252거래일 전부터 252거래일 뒤까지. 자료: ' +
+      el('#gCaseNote', view).textContent = '저점 종가를 0%로 두고 저점 ' + Math.abs(xMinP) + '거래일 전부터 ' + xMaxP + '거래일 뒤까지. 자료: ' +
         (c.troughFrom || '?') + ' ~ ' + (c.troughTo || '?') + '. 세로축은 저점 대비 %입니다.';
     } else {
       var all = (c.prePath || []).concat(c.path || []).map(function (p) { return [p[0], p[1]]; });
@@ -1782,19 +2090,23 @@
       var minY = Math.min.apply(null, all.map(function (p) { return p[1]; }));
       var ti = 0;
       all.forEach(function (p, i) { if (p[1] < all[ti][1]) ti = i; });
+      var xMinX = all[0][0], xMaxX = all[all.length - 1][0];
       Charts.line(host, {
         height: 260,
         series: [{ name: '고점 대비', color: c.color, points: all }],
-        xMin: all[0][0], xMax: all[all.length - 1][0],
-        xTicks: [{ x: -252, label: '-252' }, { x: 0, label: '고점' }, { x: 126, label: '+126' }, { x: all[all.length - 1][0], label: '+' + all[all.length - 1][0] }],
+        xMin: xMinX, xMax: xMaxX,
+        xTicks: [{ x: -252, label: '-252' }, { x: 0, label: '고점' }, { x: 126, label: '+126' }, { x: xMaxX, label: '+' + xMaxX }]
+          .filter(function (t) { return t.x >= xMinX && t.x <= xMaxX; })
+          .filter(function (t, i2, arr) { return arr.map(function (z) { return z.x; }).indexOf(t.x) === i2; }),
         yMin: Math.min(0, Math.floor(minY / 10) * 10), yMax: 10,
         hlines: [{ y: 0, color: '#5d7096', label: '고점 = 0%' }],
         vlines: [{ x: 0, color: '#5d7096' }],
-        markers: [{ x: all[ti][0], y: all[ti][1], color: '#e8ecf4', label: '최저 ' + F.pct(all[ti][1], 1), r: 4 }],
+        markers: [{ x: (c.markX !== undefined ? c.markX : all[ti][0]), y: (c.markY !== undefined ? c.markY : all[ti][1]),
+          color: '#e8ecf4', label: '최저 ' + F.pct(c.markY !== undefined ? c.markY : all[ti][1], 1), r: 4 }],
         yDigits: 0
       });
-      el('#gCaseNote', view).textContent = '고점 종가를 0%로 두고 고점 252거래일 전부터 252거래일 뒤까지. 고점 전 자료는 ' +
-        (c.preFrom ? c.preFrom + '부터' : '없음') + ' · 일봉 종가.';
+      el('#gCaseNote', view).textContent = '고점 종가를 0%로 두고 고점 ' + Math.abs(xMinX) + '거래일 전부터 ' + xMaxX + '거래일 뒤까지. 고점 전 자료는 ' +
+        (c.preFrom ? c.preFrom + '부터' : '없음') + ' · 일별 종가 선.';
     }
   }
 

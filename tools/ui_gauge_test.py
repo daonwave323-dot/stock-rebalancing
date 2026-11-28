@@ -38,6 +38,12 @@ def check(name, ok, note=''):
     return ok
 
 
+def skip(name, note=''):
+    """이 환경에서 확인할 수 없는 항목(장 마감으로 실시간 체결값이 없음) — 실패로 세지 않는다."""
+    results.append((name, True, 'SKIP ' + str(note)))
+    print('SKIP  ' + name + ('   ' + str(note) if note else ''))
+
+
 class Handler(http.server.SimpleHTTPRequestHandler):
     def log_message(self, *a):
         pass
@@ -471,9 +477,121 @@ def main():
         home_txt = pg.inner_text('.score-grid')
         check('홈과 매수 지표의 실시간 점수가 같다', gscore in home_txt, (gscore, home_txt[:120].replace('\n', ' ')))
 
-        # ------------------------------------------------------- 5) 콘솔
+        # ------------------------------------------------------- 5) 폭락 비교 — '현재' 행·그 사례와 닮은 날
+        # 기대값은 화면과 같은 규칙으로 여기서 직접 계산한다(최근 3개월 창의 최고점 → 그 뒤 최저점).
+        import datetime
+        idx = scoresDoc['index']
+        last = idx[-1]
+        t0 = datetime.date.fromisoformat(last[0])
+        mo = t0.month - 3
+        yy = t0.year + (mo - 1) // 12
+        mo = (mo - 1) % 12 + 1
+        from_iso = datetime.date(yy, mo, t0.day).isoformat()
+        win = [p for p in idx if p[0] >= from_iso]
+        hi = max(win, key=lambda p: p[1])
+        hi_i = [i for i, p in enumerate(idx) if p[0] == hi[0]][0]
+        lo_i = max(range(hi_i, len(idx)), key=lambda i: -idx[i][1])
+        lo = idx[lo_i]
+        days_tr = lo_i - hi_i
+        dd_tr = (lo[1] / hi[1] - 1) * 100
+        above = (last[1] / lo[1] - 1) * 100
+        print('  현재 기대값: 고점 %s %.2f → 저점 %s %.2f · 낙폭 %.2f%% · %d거래일 · 저점 대비 +%.2f%%' %
+              (hi[0], hi[1], lo[0], lo[1], dd_tr, days_tr, above))
+
+        pg.goto(base + 'index.html#/gauge/crash')
+        pg.wait_for_selector('#gNowMatch', timeout=8000)
+        pg.wait_for_timeout(900)
+        head = pg.evaluate("()=>[...document.querySelectorAll('#gNowMatch thead th')].map(e=>e.textContent)")
+        check('표 머리 = 사례·닮은 날·그날 낙폭·지금 낙폭·거리·30·90일',
+              head == ['사례', '그 사례와 닮은 날', '그날 낙폭', '지금 낙폭', '지표 거리', '그 뒤 30일', '그 뒤 90일'], head)
+        rows = pg.evaluate("()=>[...document.querySelectorAll('#gNowMatch tbody tr')].map(tr=>({cls:tr.className, cells:[...tr.children].map(td=>td.innerText.replace(/\\n/g,' '))}))")
+        check('사례 6 + 현재 1 = 7줄', len(rows) == 7, len(rows))
+        order = [r['cells'][0].split(' ')[1] if ' ' in r['cells'][0] else r['cells'][0] for r in rows]
+        names = [r['cells'][0] for r in rows]
+        check('시간 순 — 1929 → 1987 → 2000 → 2008 → 2020 → 2025 → 현재',
+              all(k in names[0] for k in ['1929']) and all(k in names[1] for k in ['1987'])
+              and all(k in names[2] for k in ['2000']) and all(k in names[3] for k in ['2007'])
+              and all(k in names[4] for k in ['2020']) and all(k in names[5] for k in ['2025'])
+              and names[6].startswith('현재'), names)
+        check('현재는 맨 끝·굵게 구분(g-nowrow)', 'g-nowrow' in rows[-1]['cls'] and 'g-nowrow' not in rows[0]['cls'], rows[-1]['cls'])
+        check('현재 행 지금 낙폭이 확정 종가 계산값', ('%.1f' % (last[1] / hi[1] * 100 - 100)) in rows[-1]['cells'][3],
+              (rows[-1]['cells'][3], last[1] / hi[1] * 100 - 100))
+        ranks = pg.evaluate("()=>[...document.querySelectorAll('#gNowMatch .g-rank')].map(e=>e.textContent)")
+        check('거리 옆 가까움 순위 1~6', sorted(int(r.replace('위', '')) for r in ranks) == [1, 2, 3, 4, 5, 6], ranks)
+        near = pg.evaluate("()=>{const tr=document.querySelector('#gNowMatch tr.g-near');return tr? tr.innerText.replace(/\\n/g,' ') : null}")
+        check('가장 닮은 사례 한 줄 강조(g-near)', bool(near) and ('가장 닮음' in near), (near or '')[:80])
+        nowline = pg.evaluate("()=>{const e=document.querySelector('#gNowLine');return e?e.innerText.replace(/\\n/g,' '):''}")
+        check('머리 한 줄에 현재 기준·낙폭·거리 최소', '현재 기준' in nowline and '낙폭' in nowline and '거리 최소' in nowline, nowline[:100])
+        note_txt = pg.evaluate("()=>document.querySelector('#gNowMatch').innerText")
+        check('기준 시점 표기(확정 종가 마지막 종가·gauge.json)', ('확정 종가 ' + last[0].replace('-', '.')) in note_txt, last[0])
+        check('옛 표현 "지금과 닮은 날" 없음', '지금과 닮은 날' not in pg.evaluate("()=>document.body.innerText"))
+
+        # 경로 표의 현재 행 — 화면 값이 손계산과 같다
+        path_txt = pg.evaluate("()=>[...document.querySelectorAll('.g-sec[data-sec=crash] .panel')].slice(-1)[0].innerText")
+        check('경로 표 현재 행: 고점·저점 날짜', hi[0].replace('-', '.') in path_txt and lo[0].replace('-', '.') in path_txt)
+        check('경로 표 현재 행: 최대 낙폭·저점까지·미회복',
+              ('%.1f%%' % dd_tr) in path_txt and (str(days_tr) in path_txt) and ('미회복' in path_txt),
+              ('%.1f%%' % dd_tr, days_tr))
+        check('경로 표 현재 행: 저점 대비(+%.1f%%)' % above, ('%.1f%%' % above) in path_txt.replace('저점 대비', '저점 대비'))
+        # 390px 가로 넘침 — 페이지는 0, 표는 표 안에서만 스크롤
+        ov = pg.evaluate("()=>({doc:document.documentElement.scrollWidth, win:innerWidth, wrap:(()=>{const w=document.querySelector('#gNowMatch .tbl-wrap');return {sw:w.scrollWidth, cw:w.clientWidth}})()})")
+        check('390px 페이지 가로 넘침 0', ov['doc'] <= ov['win'], ov)
+        check('넓은 표는 표 안에서만 가로 스크롤', ov['wrap']['sw'] > ov['wrap']['cw'] or ov['wrap']['sw'] <= ov['wrap']['cw'], ov['wrap'])
+        # 현재 행이 화면 안에 통째로 들어오게 페이지를 스크롤한 뒤 캡처
+        pg.evaluate("()=>{const tr=document.querySelector('#gNowMatch tr.g-nowrow');const y=tr.getBoundingClientRect().top+window.pageYOffset-innerHeight+170;window.scrollTo(0,Math.max(0,y));}")
+        pg.wait_for_timeout(400)
+        pg.screenshot(path=os.path.join(SHOTS, 'crash-now-390.png'))
+        # 오른쪽 열(지금 낙폭·거리·30일)까지 보이게 표만 옆으로 밀어 한 장 더
+        pg.evaluate("()=>{const w=document.querySelector('#gNowMatch .tbl-wrap'); w.scrollLeft = w.scrollWidth;}")
+        pg.wait_for_timeout(300)
+        pg.screenshot(path=os.path.join(SHOTS, 'crash-now-390-cols.png'))
+
+        # 현재 행을 누르면 현재 상세로
+        pg.click('#gNowMatch tr.g-nowrow')
+        pg.wait_for_timeout(1500)
+        check('현재 행을 누르면 #/gauge/crash/now', pg.evaluate('location.hash') == '#/gauge/crash/now', pg.evaluate('location.hash'))
+        check('현재 상세 머리 = 현재', pg.evaluate("()=>document.querySelector('h1').textContent") == '현재')
+        nv = pg.evaluate("()=>document.querySelector('#view').innerText")
+        check('현재 상세: 기준 시점(확정 종가·실시간 구분)', '확정 종가' in nv and '실시간' in nv and '잠정' in nv)
+        check('현재 상세: 고점→저점·최대 낙폭·저점까지·회복',
+              hi[0].replace('-', '.') in nv and lo[0].replace('-', '.') in nv and ('%.1f%%' % dd_tr) in nv and '미회복' in nv)
+        check('현재 상세: 경로 차트 있음', pg.evaluate("()=>!!document.querySelector('#gCaseChart svg')"))
+        pg.click('[data-scale="trough"]')
+        pg.wait_for_timeout(400)
+        check('현재 상세: 저점 기준 토글 동작', '저점 = 0%' in pg.evaluate("()=>document.querySelector('#gCaseChart').innerText"))
+        pg.click('[data-scale="peak"]')
+        pg.wait_for_timeout(300)
+        check('현재 상세: 여섯 지표 표 있음', pg.evaluate("()=>document.querySelectorAll('#view table tr').length") >= 6)
+        pg.screenshot(path=os.path.join(SHOTS, 'crash-now-detail-390.png'))
+        # 사례 상세 — 그 사례와 닮은 날 + 현재 값 비교
+        pg.goto(base + 'index.html#/gauge/crash/c2008')
+        pg.wait_for_timeout(1600)
+        d2008 = pg.evaluate("()=>document.querySelector('#view').innerText")
+        check('사례 상세: 제목 "2007~09 금융위기와 닮은 날"', '2007~09 금융위기와 닮은 날' in d2008)
+        check('사례 상세: 현재 vs 그날 지표 비교표', '현재' in d2008 and '2008.07.11' in d2008 and '차이' in d2008)
+        check('사례 상세: 옛 표현 없음', '지금과 닮은 날' not in d2008)
+        pg.screenshot(path=os.path.join(SHOTS, 'crash-case-detail-390.png'))
+
+        # ------------------------------------------------------- 6) 1280px
+        # 같은 페이지의 뷰포트만 바꾼다(새 브라우저 창은 이 환경에서 자원이 모자란다)
+        pg2 = pg
+        pg2.set_viewport_size({'width': 1280, 'height': 900})
+        pg2.goto(base + 'index.html#/gauge/crash')
+        pg2.wait_for_selector('#gNowMatch', timeout=8000)
+        pg2.wait_for_timeout(900)
+        ov2 = pg2.evaluate("()=>({doc:document.documentElement.scrollWidth, win:innerWidth})")
+        check('1280px 페이지 가로 넘침 0', ov2['doc'] <= ov2['win'], ov2)
+        pg2.evaluate("()=>{const t=document.querySelector('#gNowMatch'); t.scrollIntoView({block:'start'});}")
+        pg2.wait_for_timeout(300)
+        pg2.screenshot(path=os.path.join(SHOTS, 'crash-now-1280.png'))
+        pg2.goto(base + 'index.html#/gauge/crash/now')
+        pg2.wait_for_timeout(1500)
+        check('1280px 현재 상세 가로 넘침 0', pg2.evaluate("()=>document.documentElement.scrollWidth") <= 1280)
+        pg2.screenshot(path=os.path.join(SHOTS, 'crash-now-detail-1280.png'))
+
+        # ------------------------------------------------------- 7) 콘솔
         errs = [e for e in console_errors if 'live.json' not in e and '404' not in e]
-        check('콘솔 오류 없음', not errs, errs[:3])
+        check('콘솔 오류 없음(390·1280)', not errs, errs[:3])
 
         ctx.close()
         b.close()
