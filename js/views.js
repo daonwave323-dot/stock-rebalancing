@@ -20,6 +20,51 @@
      콜백(모달 확인, 비동기 응답) 안에서는 잡아 둔 view 대신 이걸 쓴다. */
   function liveView() { return document.getElementById('view'); }
 
+  /* ------------------------------------------------------------ 산점도 기준 (확정 종가 / 실시간) */
+  var AVG_BAND = 3;       /* 기준 낙폭 ±%p — 평균선을 내는 구간 */
+  var AVG_MIN_N = 5;      /* 표본이 이보다 적으면 평균을 긋지 않는다 */
+  var AVG_COLOR = '#3fd0c0';
+
+  /* 매수 지표 화면과 같은 설정(localStorage 'basis')을 따른다 */
+  function basisMode() {
+    try { if (w.Basis && Basis.get) return Basis.get(); } catch (e) {}
+    return S.get('basis', 'close') === 'live' ? 'live' : 'close';
+  }
+  function setBasisMode(v) {
+    var want = v === 'live' ? 'live' : 'close';
+    try { if (w.Basis && Basis.set) { Basis.set(want); return; } } catch (e) {}
+    S.set('basis', want);
+  }
+
+  /* live.json 의 ^NDX 현재 값 — 없으면 null(값을 지어내지 않는다) */
+  function ndxLive() {
+    var L = (w.Live && Live.data) ? Live.data() : (Data.live || null);
+    var s = L && L.symbols ? L.symbols['^NDX'] : null;
+    var price = null, at = null, sess = null;
+    if (s) {
+      price = (s.sessionPrice !== null && s.sessionPrice !== undefined) ? s.sessionPrice : s.last;
+      at = s.sessionTimeEt || s.lastTimeEt || s.lastTime || null;
+      sess = s.sessionLabel || s.session || null;
+    }
+    if (price === null || price === undefined) {
+      var q = null;
+      try { q = (w.Basis && Basis.quote) ? Basis.quote('^NDX') : null; } catch (e) { q = null; }
+      if (q && q.price !== null && q.price !== undefined) { price = q.price; at = q.at; sess = q.session; }
+    }
+    var peak = (Data.analog && Data.analog.now ? Data.analog.now.peak_close : null) ||
+      (Data.crashes && Data.crashes.now ? Data.crashes.now.peak_close : null);
+    if (price === null || price === undefined || !peak) return null;
+    return {
+      price: Number(price), dd: (Number(price) / peak - 1) * 100,
+      at: at, session: sess, peak: peak, updatedAtKst: (L && L.updatedAtKst) || null
+    };
+  }
+
+  function idxNum(v) {
+    if (v === null || v === undefined || isNaN(v)) return '—';
+    return Number(v).toLocaleString('en-US', { maximumFractionDigits: 0 });
+  }
+
   var HOLD_KEY = 'holdings';
   var SET_KEY = 'settings';
   var JOURNAL_KEY = 'journal';
@@ -2019,7 +2064,15 @@
     var cases = Data.crashes.cases;
     var matches = Data.crashes.matches || [];
     var contrast = Data.crashes.contrast;
-    var focusDd = analogFocus === null ? now.dd : analogFocus;
+
+    /* 기준 낙폭 — 매수 지표·증시와 같은 기준(확정 종가 / 실시간)을 따른다.
+       실시간을 골라 두고 live.json 값이 없으면 확정 종가로 두고 화면에 그렇게 밝힌다. */
+    var basis = basisMode();
+    var lq = ndxLive();
+    var base = (basis === 'live' && lq)
+      ? { mode: 'live', dd: lq.dd, price: lq.price, at: lq.at, session: lq.session, live: lq, missing: false }
+      : { mode: 'close', dd: now.dd, price: now.close, at: now.as_of, session: null, live: lq, missing: basis === 'live' };
+    var focusDd = analogFocus === null ? base.dd : analogFocus;
 
     /* 사례별 가장 가까운 하루 — 원본 Crash.matches */
     var matchRows = matches.map(function (m, i) {
@@ -2089,6 +2142,35 @@
         title: Data.caseName(p[0]) + ' · 고점+' + p[1] + '일 · 낙폭 ' + p[2].toFixed(1) + '% · ' + analogHorizon + '일 뒤 ' + y.toFixed(1) + '%'
       });
     });
+
+    /* 기준 ±3%p 구간의 점들 — 사례 필터·지평이 이미 반영된 pts 에서 고른다.
+       평균은 실제 점의 세로값에서만 낸다(없는 값을 지어내지 않는다). */
+    var bandPts = pts.filter(function (p) { return Math.abs(p.x - focusDd) <= AVG_BAND + 1e-9; });
+    var bandN = bandPts.length;
+    var bandAvg = null;
+    if (bandN) {
+      var bsum = 0;
+      bandPts.forEach(function (p) { bsum += p.y; });
+      bandAvg = bsum / bandN;
+    }
+    var showAvg = bandAvg !== null && bandN >= AVG_MIN_N;
+
+    /* 기준·평균 뱃지 — 390px 에서도 잘리지 않게 차트 위 줄에 둔다 */
+    var baseBadge =
+      '<span class="badge ' + (base.mode === 'live' ? 'live' : 'grey') + '" id="scatterBase" title="' +
+        esc(base.mode === 'live'
+          ? 'live.json ^NDX ' + idxNum(base.price) + ' · ' + (base.session || '') + ' ' + (base.at || '') +
+            ' · 고점 ' + idxNum(base.live.peak) + ' 대비'
+          : '^NDX 확정 종가 ' + idxNum(base.price) + ' · ' + F.day(now.as_of) + ' 종가 · 고점 ' + idxNum(now.peak_close) + ' 대비') + '">' +
+        (base.mode === 'live' ? '실시간' : '확정 종가') + ' ' + idxNum(base.price) + ' · 낙폭 ' + F.pct(base.dd, 1) + '</span>';
+    if (base.missing) baseBadge += '<span class="dim small">실시간 값 없음 — 확정 종가 기준</span>';
+    var avgBadge = showAvg
+      ? '<span class="badge" id="scatterAvg" data-n="' + bandN + '" data-avg="' + bandAvg.toFixed(2) +
+          '" data-focus="' + focusDd + '" data-band="' + AVG_BAND + '" data-hor="' + analogHorizon + '"' +
+          ' style="color:' + AVG_COLOR + ';border-color:#2f6f68;background:#17322f">' +
+          '기준 ±' + AVG_BAND + '%p 평균 <b>' + F.pct(bandAvg, 1) + '</b> <span class="dim">(' + bandN + '일)</span></span>'
+      : '<span class="badge grey" id="scatterAvg" data-n="' + bandN + '" data-focus="' + focusDd +
+          '" data-band="' + AVG_BAND + '" data-hor="' + analogHorizon + '">기준 ±' + AVG_BAND + '%p 표본 부족(' + bandN + ')</span>';
 
     var allTrades = journal();
     var badTrades = allTrades.filter(function (r) { return r.principles && r.principles.pass === false; });
@@ -2207,8 +2289,18 @@
           '<div class="row" style="margin-bottom:8px"><span class="badge blue">닮은 날 기준 낙폭 ' + F.pct(analogFocus, 1) + '</span>' +
           '<span class="dim small">' + (analogFocusNote || '') + '</span>' +
           '<button class="linkbtn" type="button" id="focusReset">지금 낙폭으로 →</button></div>' : '') +
+        '<div class="row" style="flex-wrap:wrap;gap:6px;margin-bottom:8px">' +
+          '<button class="chip ' + (basis === 'close' ? 'on' : '') + '" type="button" data-bs="close">확정 종가</button>' +
+          '<button class="chip ' + (basis === 'live' ? 'on' : '') + '" type="button" data-bs="live">실시간</button>' +
+          baseBadge + avgBadge +
+        '</div>' +
         '<div class="chart-box" id="scatter"></div>' +
-        '<p class="note">가로축 고점 대비 낙폭(%), 세로축 ' + analogHorizon + '거래일 뒤 수익률(%). 점 하나가 사례의 하루입니다. 흰 세로선이 기준 낙폭(' + F.pct(focusDd, 1) + '), 흰 마름모가 내 기록입니다.</p>' +
+        '<p class="note">가로축 고점 대비 낙폭(%), 세로축 ' + analogHorizon + '거래일 뒤 수익률(%). 점 하나가 사례의 하루입니다. ' +
+          '흰 세로선이 기준 낙폭(' + F.pct(focusDd, 1) + '), 흰 마름모가 내 기록입니다. ' +
+          '청록 가로선은 기준 낙폭 ±' + AVG_BAND + '%p 구간에 있던 과거 날들의 평균 수익률입니다' +
+          (showAvg ? ' (' + bandN + '일)' : '') + ' — 구간 점이 ' + AVG_MIN_N + '개 미만이면 긋지 않습니다. ' +
+          '기준은 매수 지표의 정규장/프리마켓 토글과 같은 설정입니다 — 실시간 값이 없으면 확정 종가로 둡니다.' +
+          (base.mode === 'live' ? ' 지금 기준은 live.json ^NDX ' + idxNum(base.price) + ' · ' + (base.session || '') + ' ' + (base.at || '') + ' 값입니다.' : '') + '</p>' +
       '</div>' +
 
       '<div class="panel">' +
@@ -2267,8 +2359,18 @@
       xLabel: '고점 대비 낙폭 (%)',
       yLabel: analogHorizon + '일 뒤 수익률 (%)',
       markers: markers,
+      bands: [{ x0: focusDd - AVG_BAND, x1: focusDd + AVG_BAND, color: 'rgba(63,208,192,0.09)' }],
       vlines: [{ x: focusDd, color: '#e8ecf4', label: '기준 ' + F.pct(focusDd, 1), dash: '4 4' }],
-      hlines: [{ y: 0, color: '#5f7396' }]
+      hlines: [{ y: 0, color: '#5f7396' }].concat(showAvg
+        ? [{ y: bandAvg, color: AVG_COLOR, width: 1.8, label: '평균 ' + F.pct(bandAvg, 1) + ' (' + bandN + '일)' }]
+        : [])
+    });
+
+    on(view, 'click', '[data-bs]', function (e, t) {
+      var want = t.getAttribute('data-bs');
+      if (want === basis) return;
+      setBasisMode(want);
+      render();
     });
 
     on(view, 'click', '[data-hor]', function (e, t) {

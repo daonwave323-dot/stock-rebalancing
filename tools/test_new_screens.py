@@ -172,6 +172,140 @@ def main():
         val = pg.evaluate("(()=>{const s=document.querySelector('#taxOut').innerText;return s;})()")
         check('세금 식 적용(공제 가정 문구)', '0원으로 가정' in val or '250만원' in val)
 
+        # ---------------------------------------------------------- 기록: 과거 대입 산점도 구간 평균선
+        go('#/journal/verify', 2400)
+        check('산점도: 차트 그림', pg.locator('#scatter svg').count() == 1)
+        check('산점도: 기준 뱃지', '낙폭' in pg.inner_text('#scatterBase'), pg.inner_text('#scatterBase').replace('\n', ' '))
+
+        def scatter_state():
+            return pg.evaluate("""() => {
+              const a = document.querySelector('#scatterAvg');
+              const svg = document.querySelector('#scatter svg');
+              if (!a || !svg) return null;
+              const teal = [...svg.querySelectorAll('line')].filter(l => l.getAttribute('stroke') === '#3fd0c0');
+              const bandR = [...svg.querySelectorAll('rect')].filter(r => (r.getAttribute('fill') || '').indexOf('63,208,192') >= 0);
+              const lab = [...svg.querySelectorAll('text')].map(t => t.textContent).filter(s => s.indexOf('평균 ') === 0);
+              return {
+                base: document.querySelector('#scatterBase').innerText,
+                n: Number(a.dataset.n), avg: a.dataset.avg === undefined ? null : Number(a.dataset.avg),
+                focus: Number(a.dataset.focus), band: Number(a.dataset.band), hor: Number(a.dataset.hor),
+                text: a.innerText, teal: teal.length, bandRects: bandR.length, label: lab[0] || ''
+              };
+            }""")
+
+        def norm(st):
+            if st:
+                st['base'] = st['base'].replace('\n', ' ')
+                st['text'] = st['text'].replace('\n', ' ')
+            return st
+
+        def avg_from_points(st):
+            return pg.evaluate("""(d) => {
+              const idx = d.hor === 30 ? 3 : d.hor === 90 ? 4 : 5;
+              const on = document.querySelector('[data-case].on');
+              const filt = on ? on.getAttribute('data-case') : 'all';
+              const pts = Data.analog.points.filter(p => (filt === 'all' || p[0] === filt) &&
+                p[idx] !== null && p[idx] !== undefined && Math.abs(p[2] - d.focus) <= d.band + 1e-9);
+              const sum = pts.reduce((a, p) => a + p[idx], 0);
+              return {n: pts.length, avg: pts.length ? sum / pts.length : null, filt: filt};
+            }""", st)
+
+        def check_avg(st, tag):
+            calc = avg_from_points(st)
+            check('산점도[%s]: 표본 수가 점에서 다시 센 수와 같다' % tag, st['n'] == calc['n'],
+                  '%s vs %s (필터 %s)' % (st['n'], calc['n'], calc['filt']))
+            if calc['n'] >= 5:
+                check('산점도[%s]: 평균값이 점에서 다시 낸 값과 같다' % tag,
+                      st['avg'] is not None and abs(st['avg'] - calc['avg']) < 0.011,
+                      '%s vs %.2f' % (st['avg'], calc['avg']))
+                check('산점도[%s]: 청록 평균선 하나' % tag, st['teal'] == 1, str(st['teal']))
+                check('산점도[%s]: 라벨에 값·표본 수' % tag,
+                      ('(%d일)' % calc['n']) in st['label'] and '평균 ' in st['label'], st['label'])
+            else:
+                check('산점도[%s]: 표본 부족(%d)이면 평균선 없음' % (tag, calc['n']),
+                      '표본 부족' in st['text'] and st['teal'] == 0, st['text'])
+            return calc
+
+        st30 = norm(scatter_state())
+        check('산점도: 기준 ±3%p 구간 띠', st30['band'] == 3 and st30['bandRects'] == 1, str(st30['bandRects']))
+        check_avg(st30, '30일')
+        check('산점도: 흰 기준선은 그대로', pg.evaluate(
+            "[...document.querySelectorAll('#scatter svg line')].filter(l => l.getAttribute('stroke') === '#e8ecf4').length") == 1)
+
+        pg.locator('[data-hor="90"]').click()
+        pg.wait_for_timeout(600)
+        st90 = norm(scatter_state())
+        check('산점도: 90일 지평', st90['hor'] == 90, str(st90['hor']))
+        check_avg(st90, '90일')
+        pg.locator('[data-hor="180"]').click()
+        pg.wait_for_timeout(600)
+        st180 = norm(scatter_state())
+        check('산점도: 180일 지평', st180['hor'] == 180, str(st180['hor']))
+        check_avg(st180, '180일')
+        pg.locator('[data-hor="30"]').click()
+        pg.wait_for_timeout(600)
+
+        # 기준: 확정 종가 → 실시간 (매수 지표와 같은 설정을 따른다)
+        stc = norm(scatter_state())
+        live_dd = pg.evaluate("""() => {
+          const L = (window.Live && Live.data()) || Data.live;
+          const s = L && L.symbols ? L.symbols['^NDX'] : null;
+          const peak = Data.analog.now.peak_close;
+          if (!s || !peak) return null;
+          const price = (s.sessionPrice !== null && s.sessionPrice !== undefined) ? s.sessionPrice : s.last;
+          return (Number(price) / peak - 1) * 100;
+        }""")
+        check('산점도: 확정 종가 기준 뱃지', stc['base'].startswith('확정 종가'), stc['base'])
+        pg.locator('[data-bs="live"]').click()
+        pg.wait_for_timeout(700)
+        stl = norm(scatter_state())
+        if live_dd is None:
+            check('산점도: 실시간 값 없음 → 확정 종가 기준으로 밝힘', '확정' in stl['base'], stl['base'])
+        else:
+            check('산점도: 실시간 기준 뱃지', '실시간' in stl['base'], stl['base'])
+            check('산점도: 실시간 낙폭 = live.json ^NDX 로 낸 값', abs(stl['focus'] - live_dd) < 0.002,
+                  '%.4f vs %.4f' % (stl['focus'], live_dd))
+            check('산점도: 기준이 바뀌면 평균도 다시 계산', abs(stl['focus'] - stc['focus']) > 0.001)
+            check_avg(stl, '실시간 30일')
+            check('산점도: 기준 세로선도 실시간 낙폭으로', ('기준 ' + ('%.1f' % live_dd) + '%') in pg.evaluate(
+                  "[...document.querySelectorAll('#scatter svg text')].map(t => t.textContent).join('|')"),
+                  pg.evaluate("[...document.querySelectorAll('#scatter svg text')].map(t => t.textContent).join('|')")[:80])
+        pg.reload()
+        pg.wait_for_timeout(2400)
+        check('산점도: 실시간 기준이 새로고침 뒤에도 유지(매수 지표와 같은 설정)',
+              pg.evaluate("localStorage.getItem('stockrebal.basis')") == '"live"',
+              pg.evaluate("localStorage.getItem('stockrebal.basis')"))
+        pg.locator('[data-bs="close"]').click()
+        pg.wait_for_timeout(600)
+        if live_dd is not None:
+            check('산점도: 확정 종가로 되돌림', norm(scatter_state())['focus'] == stc['focus'],
+                  '%s vs %s' % (norm(scatter_state())['focus'], stc['focus']))
+
+        # 사례 필터 — 필터 안의 점만으로 평균
+        chips = pg.locator('[data-case]')
+        tested = 0
+        under = False
+        for i in range(1, chips.count()):
+            chips.nth(i).click()
+            pg.wait_for_timeout(500)
+            stf = norm(scatter_state())
+            tested += 1
+            calc = avg_from_points(stf)
+            if calc['n'] < 5:
+                under = True
+                check('산점도: 사례 필터(표본 %d) → 표본 부족, 평균선 없음' % calc['n'],
+                      '표본 부족' in stf['text'] and stf['teal'] == 0, stf['text'])
+                break
+            check('산점도: 사례 필터 안의 점만으로 평균', stf['n'] == calc['n'], '%s vs %s' % (stf['n'], calc['n']))
+        if not under:
+            check('산점도: 표본 부족 사례 확인', True, '필터 %d개 모두 표본 5개 이상' % tested)
+        pg.locator('[data-case="all"]').click()
+        pg.wait_for_timeout(500)
+        check('산점도: 전체로 돌아오면 평균선 복귀', norm(scatter_state())['teal'] == 1)
+        pg.locator('#scatter').scroll_into_view_if_needed()
+        pg.wait_for_timeout(300)
+        pg.screenshot(path=os.path.join(SHOTS, 'verify-scatter-1280.png'))
+
         # ---------------------------------------------------------- 도구: 가져오기
         go('#/tools/import', 1000)
         pg.locator('[data-imp-sample]').click()
@@ -202,6 +336,37 @@ def main():
         pg2.wait_for_timeout(1400)
         ow2 = pg2.evaluate("document.documentElement.scrollWidth - document.documentElement.clientWidth")
         check('일정 390 넘침 없음', ow2 <= 1, 'overflow=%s' % ow2)
+
+        # 검증 기록 산점도 — 390 에서 라벨이 잘리지·겹치지 않게
+        pg2.goto(base + 'index.html#/journal/verify')
+        pg2.wait_for_timeout(2600)
+        ow3 = pg2.evaluate("document.documentElement.scrollWidth - document.documentElement.clientWidth")
+        check('검증 390 넘침 없음', ow3 <= 1, 'overflow=%s' % ow3)
+        lb = pg2.evaluate("""() => {
+          const svg = document.querySelector('#scatter svg');
+          const out = {svg: svg.getBoundingClientRect().toJSON(), texts: [], rects: []};
+          [...svg.querySelectorAll('text')].forEach(t => {
+            if (/^평균 |^기준 /.test(t.textContent)) out.texts.push({t: t.textContent, b: t.getBoundingClientRect().toJSON()});
+          });
+          [...svg.querySelectorAll('rect')].forEach(r => {
+            if ((r.getAttribute('fill') || '').indexOf('63,208,192') >= 0) out.rects.push(r.getBoundingClientRect().toJSON());
+          });
+          return out;
+        }""")
+        sv = lb['svg']
+        inside = all(t['b']['left'] >= sv['left'] - 0.5 and t['b']['right'] <= sv['right'] + 0.5 for t in lb['texts'])
+        check('검증 390: 평균·기준 라벨이 차트 안', inside,
+              ' '.join('%s[%d~%d]' % (t['t'], round(t['b']['left']), round(t['b']['right'])) for t in lb['texts']))
+        overlap = False
+        for i in range(len(lb['texts'])):
+            for j in range(i + 1, len(lb['texts'])):
+                a, b2 = lb['texts'][i]['b'], lb['texts'][j]['b']
+                if a['left'] < b2['right'] and b2['left'] < a['right'] and a['top'] < b2['bottom'] and b2['top'] < a['bottom']:
+                    overlap = True
+        check('검증 390: 평균·기준 라벨이 겹치지 않음', not overlap)
+        pg2.locator('#scatter').scroll_into_view_if_needed()
+        pg2.wait_for_timeout(300)
+        pg2.screenshot(path=os.path.join(SHOTS, 'verify-scatter-390.png'))
 
         pg.goto(base + 'index.html#/market')
         pg.wait_for_timeout(1500)

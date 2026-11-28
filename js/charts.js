@@ -30,6 +30,17 @@
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   }
 
+  /* 글자 폭 어림 — SVG 는 글자 폭을 재 주지 않아 라벨 배경 상자를 그릴 때만 쓴다.
+     한글·전각은 글자 크기, 그 밖은 그 절반 남짓 */
+  function textW(str, size) {
+    var w = 0, t = String(str === null || str === undefined ? '' : str);
+    for (var i = 0; i < t.length; i++) {
+      var c = t.charCodeAt(i);
+      w += (c >= 0x2E80) ? size : size * 0.45;
+    }
+    return w;
+  }
+
   var AXIS = '#5b6a82', GRID = '#333c4a', TXT = '#9aa5b6';
 
   /**
@@ -157,7 +168,9 @@
   /**
    * 산점도.
    * opt: {points:[{x,y,color,r,title}], xMin,xMax,yMin,yMax, xTicks, yTicks, xDigits, yDigits,
-   *       vlines, hlines, markers, height, xLabel, yLabel}
+   *       vlines, hlines, bands, markers, height, xLabel, yLabel}
+   *  - bands: [{x0,x1,color}] 가로축 구간 띠(눈금·점보다 먼저 깔린다)
+   *  - hlines[].label 이 있으면 점을 다 그린 뒤 오른쪽 끝에 적는다(0 눈금과 겹치면 반대쪽).
    */
   function scatter(host, opt) {
     if (!host) return;
@@ -179,6 +192,14 @@
     var sy = function (y) { return pad.t + ih - (y - yMin) / yr * ih; };
 
     var s = ['<svg viewBox="0 0 ' + W + ' ' + H + '" width="' + W + '" height="' + H + '" role="img">'];
+
+    /* 구간 띠 — 눈금과 점보다 먼저 깔아 뒤에 둔다 */
+    (opt.bands || []).forEach(function (bd) {
+      var bx0 = sx(Math.min(bd.x0, bd.x1)), bx1 = sx(Math.max(bd.x0, bd.x1));
+      s.push('<rect x="' + bx0.toFixed(1) + '" y="' + pad.t + '" width="' + Math.max(0.5, bx1 - bx0).toFixed(1) +
+        '" height="' + ih + '" fill="' + (bd.color || 'rgba(63,208,192,0.08)') + '"/>');
+    });
+
     var yt = opt.yTicks || niceTicks(yMin, yMax, 5);
     yt.forEach(function (v) {
       if (v < yMin - 1e-9 || v > yMax + 1e-9) return;
@@ -193,20 +214,40 @@
       s.push('<line x1="' + x.toFixed(1) + '" y1="' + pad.t + '" x2="' + x.toFixed(1) + '" y2="' + (pad.t + ih) + '" stroke="' + GRID + '" stroke-width="1" stroke-dasharray="2 4"/>');
       s.push('<text x="' + x.toFixed(1) + '" y="' + (H - 12) + '" text-anchor="middle" font-size="10.5" fill="' + TXT + '">' + esc(fmtTick(v, opt.xDigits === undefined ? 0 : opt.xDigits)) + '</text>');
     });
+    var hLabels = [];
     (opt.hlines || []).forEach(function (h) {
       var y = sy(h.y);
-      s.push('<line x1="' + pad.l + '" y1="' + y.toFixed(1) + '" x2="' + (W - pad.r) + '" y2="' + y.toFixed(1) + '" stroke="' + (h.color || AXIS) + '" stroke-width="1"' + (h.dash ? ' stroke-dasharray="' + h.dash + '"' : '') + '/>');
+      s.push('<line x1="' + pad.l + '" y1="' + y.toFixed(1) + '" x2="' + (W - pad.r) + '" y2="' + y.toFixed(1) + '" stroke="' + (h.color || AXIS) + '" stroke-width="' + (h.width || 1) + '"' + (h.dash ? ' stroke-dasharray="' + h.dash + '"' : '') + '/>');
+      if (h.label) hLabels.push({ y: y, text: h.label, color: h.color || TXT, val: h.y });
     });
     (opt.vlines || []).forEach(function (v) {
       var x = sx(v.x);
       s.push('<line x1="' + x.toFixed(1) + '" y1="' + pad.t + '" x2="' + x.toFixed(1) + '" y2="' + (pad.t + ih) + '" stroke="' + (v.color || AXIS) + '" stroke-width="1"' + (v.dash ? ' stroke-dasharray="' + v.dash + '"' : '') + '/>');
-      if (v.label) s.push('<text x="' + (x + 5).toFixed(1) + '" y="' + (pad.t + 12) + '" font-size="10.5" fill="' + (v.color || TXT) + '">' + esc(v.label) + '</text>');
+      if (v.label) {
+        /* 오른쪽 끝에 붙으면 글자가 잘린다 — 그때는 선 왼쪽에 끝을 맞춘다 */
+        var vEnd = x + 66 > W - pad.r;
+        s.push('<text x="' + (vEnd ? x - 5 : x + 5).toFixed(1) + '" y="' + (pad.t + 12) + '" text-anchor="' + (vEnd ? 'end' : 'start') +
+          '" font-size="10.5" fill="' + (v.color || TXT) + '">' + esc(v.label) + '</text>');
+      }
     });
     pts.forEach(function (p) {
       var cx = sx(p.x), cy = sy(p.y);
       s.push('<circle cx="' + cx.toFixed(1) + '" cy="' + cy.toFixed(1) + '" r="' + (p.r || 2.6) + '" fill="' + (p.color || '#6a9ae0') + '" fill-opacity="' + (p.opacity || 0.55) + '"' + (p.stroke ? ' stroke="' + p.stroke + '" stroke-width="1.5"' : '') + '>');
       if (p.title) s.push('<title>' + esc(p.title) + '</title>');
       s.push('</circle>');
+    });
+    /* 가로 기준선 라벨 — 점을 가리지 않게 점 뒤에 얹고, 0 눈금과 겹치면 반대쪽에 둔다 */
+    var y0 = (yMin <= 0 && yMax >= 0) ? sy(0) : null;
+    hLabels.forEach(function (h) {
+      var above = h.val >= 0;
+      var ty = above ? h.y - 6 : h.y + 14;
+      if (y0 !== null && Math.abs(ty - y0) < 11) ty = above ? y0 - 12 : y0 + 13;
+      var tw = textW(h.text, 10.5);
+      var tx = W - pad.r - 3;
+      s.push('<rect x="' + (tx - tw - 3).toFixed(1) + '" y="' + (ty - 10.5).toFixed(1) + '" width="' + (tw + 6).toFixed(1) +
+        '" height="14" rx="3" fill="#252c3a" fill-opacity="0.86"/>');
+      s.push('<text x="' + tx + '" y="' + ty.toFixed(1) + '" text-anchor="end" font-size="10.5" font-weight="600" fill="' + h.color +
+        '" stroke="#252c3a" stroke-width="3" paint-order="stroke">' + esc(h.text) + '</text>');
     });
     (opt.markers || []).forEach(function (m) {
       var x = sx(m.x), y = sy(m.y);
